@@ -32,7 +32,11 @@ int main(int argc, char *argv[])
                                     QStringLiteral("users.csv"),
                                     QStringLiteral("ratings.csv"),
                                     QStringLiteral("borrow_records.csv")}) {
-            if (!QFile::copy(QStringLiteral(":/seed/") + name, dataDir.filePath(name))) {
+            const QString target = dataDir.filePath(name);
+            if (!QFile::copy(QStringLiteral(":/seed/") + name, target)
+                || !QFile::setPermissions(target, QFile::permissions(target)
+                                                      | QFileDevice::WriteOwner
+                                                      | QFileDevice::WriteUser)) {
                 QMessageBox::critical(nullptr, QStringLiteral("启动失败"),
                                       QStringLiteral("无法初始化示例数据：%1").arg(name));
                 return 1;
