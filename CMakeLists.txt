@@ -65,6 +65,14 @@ target_link_libraries(borrow_smoke PRIVATE bookcore)
 target_compile_definitions(borrow_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME borrow_smoke COMMAND borrow_smoke)
 
+add_executable(large_demo_smoke large_demo_smoke.cpp)
+target_link_libraries(large_demo_smoke PRIVATE bookcore)
+target_compile_definitions(large_demo_smoke PRIVATE SAMPLE_LARGE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demo_data/large")
+add_test(NAME large_demo_smoke COMMAND large_demo_smoke)
+
+add_executable(search_benchmark search_benchmark.cpp)
+target_link_libraries(search_benchmark PRIVATE bookcore)
+
 install(TARGETS BookRecommendation
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
