@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/seed">
+    <file alias="books.csv">data/books.csv</file>
+    <file alias="users.csv">data/users.csv</file>
+    <file alias="ratings.csv">data/ratings.csv</file>
+    <file alias="borrow_records.csv">data/borrow_records.csv</file>
+  </qresource>
+</RCC>
