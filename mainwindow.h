@@ -2,7 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include "bookrepository.h"
+#include "librarystore.h"
 
 class QLineEdit;
 class QSpinBox;
@@ -24,15 +24,20 @@ public:
 
 private:
     void refreshTable();
+    void showBookRows(const QVector<int> &rows);
     void selectBook(const QString &id);
     void saveSelected();
+    void addBook();
+    void deleteSelected();
 
     Ui::MainWindow *ui;
-    BookRepository books_;
-    QString booksPath_;
+    LibraryStore library_;
+    QString dataDir_;
     QString selectedId_;
     QTableWidget *table_ = nullptr;
     QLineEdit *search_ = nullptr;
+    QLineEdit *keyword_ = nullptr;
+    QLineEdit *newId_ = nullptr;
     QLineEdit *title_ = nullptr;
     QLineEdit *author_ = nullptr;
     QLineEdit *category_ = nullptr;
