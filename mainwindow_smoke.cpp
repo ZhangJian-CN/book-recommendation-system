@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -28,6 +29,8 @@ int main(int argc, char *argv[])
     {
         MainWindow window(dir.path());
         if (qEnvironmentVariableIsSet("BOOK_SCREENSHOT_PATH")) {
+            if (qEnvironmentVariableIsSet("BOOK_SCREENSHOT_RECOMMEND"))
+                window.findChild<QTabWidget *>()->setCurrentIndex(1);
             window.show();
             app.processEvents();
             window.grab().save(qEnvironmentVariable("BOOK_SCREENSHOT_PATH"));
@@ -44,9 +47,12 @@ int main(int argc, char *argv[])
         auto *keyword = window.findChild<QLineEdit *>(QStringLiteral("keywordSearch"));
         auto *keywordButton = window.findChild<QPushButton *>(QStringLiteral("keywordButton"));
         auto *showAllButton = window.findChild<QPushButton *>(QStringLiteral("showAllButton"));
+        auto *rateButton = window.findChild<QPushButton *>(QStringLiteral("rateButton"));
+        auto *recommendTable = window.findChild<QTableWidget *>(QStringLiteral("recommendTable"));
         if (!table || !search || !searchButton || !title || !stock || !saveButton
             || !newId || !addButton || !deleteButton || !keyword || !keywordButton
-            || !showAllButton || table->rowCount() != 4)
+            || !showAllButton || !rateButton || !recommendTable || table->rowCount() != 4
+            || recommendTable->rowCount() != 2)
             return 3;
 
         search->setText(QStringLiteral("B001"));
@@ -75,10 +81,17 @@ int main(int argc, char *argv[])
         deleteButton->click();
         if (table->rowCount() != 4)
             return 7;
+        rateButton->click();
+        if (recommendTable->rowCount() != 1
+            || recommendTable->item(0, 0)->text() != QStringLiteral("B004"))
+            return 8;
     }
 
     MainWindow restarted(dir.path());
     auto *table = restarted.findChild<QTableWidget *>(QStringLiteral("booksTable"));
-    return table && table->rowCount() == 4
-                   && table->item(0, 4)->text() == QStringLiteral("4") ? 0 : 9;
+    auto *recommendTable = restarted.findChild<QTableWidget *>(QStringLiteral("recommendTable"));
+    return table && recommendTable && table->rowCount() == 4
+                   && table->item(0, 4)->text() == QStringLiteral("4")
+                   && recommendTable->rowCount() == 1
+                   && recommendTable->item(0, 0)->text() == QStringLiteral("B004") ? 0 : 9;
 }

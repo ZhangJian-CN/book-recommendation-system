@@ -11,6 +11,10 @@ bool validId(const QString &id)
     return !id.isEmpty() && id == id.trimmed();
 }
 
+QString ratingKey(const QString &userId, const QString &bookId)
+{
+    return userId + QChar(0x1f) + bookId;
+}
 }
 
 bool LibraryStore::load(const QString &dataDir, QString *error)
@@ -46,7 +50,7 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
         bool scoreOk = false;
         const int score = rows[i][2].toInt(&scoreOk);
         const Rating rating{rows[i][0], rows[i][1], score};
-        const QString key = rating.userId + QChar(0x1f) + rating.bookId;
+        const QString key = ratingKey(rating.userId, rating.bookId);
         if (!userIds.contains(rating.userId) || !books.findById(rating.bookId)
             || !scoreOk || score < 1 || score > 5 || ratingKeys.contains(key)) {
             *error = QStringLiteral("ratings.csv 第 %1 行引用、评分或唯一性错误").arg(i + 2);
@@ -88,6 +92,16 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
     borrowRecords_ = records;
     return true;
 }
+
+bool LibraryStore::hasUser(const QString &id) const
+{
+    for (const User &user : users_) {
+        if (user.id == id)
+            return true;
+    }
+    return false;
+}
+
 bool LibraryStore::addBook(const Book &book, QString *error)
 {
     const BookRepository before = books_;
@@ -99,6 +113,7 @@ bool LibraryStore::addBook(const Book &book, QString *error)
     }
     return true;
 }
+
 bool LibraryStore::updateBook(const Book &book, QString *error)
 {
     const BookRepository before = books_;
@@ -130,6 +145,40 @@ bool LibraryStore::deleteBook(const QString &id, QString *error)
         return false;
     if (!books_.save(QDir(dataDir_).filePath(QStringLiteral("books.csv")), error)) {
         books_ = before;
+        return false;
+    }
+    return true;
+}
+
+bool LibraryStore::saveRatings(QString *error) const
+{
+    QVector<QStringList> rows;
+    for (const Rating &rating : ratings_)
+        rows.append({rating.userId, rating.bookId, QString::number(rating.score)});
+    return Csv::write(QDir(dataDir_).filePath(QStringLiteral("ratings.csv")),
+                      QStringLiteral("user_id,book_id,score"), rows, error);
+}
+
+bool LibraryStore::rate(const QString &userId, const QString &bookId,
+                        int score, QString *error)
+{
+    if (!hasUser(userId) || !books_.findById(bookId) || score < 1 || score > 5) {
+        *error = QStringLiteral("用户、图书不存在或评分不在 1～5 范围内");
+        return false;
+    }
+    const QVector<Rating> before = ratings_;
+    bool found = false;
+    for (Rating &rating : ratings_) {
+        if (rating.userId == userId && rating.bookId == bookId) {
+            rating.score = score;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        ratings_.append({userId, bookId, score});
+    if (!saveRatings(error)) {
+        ratings_ = before;
         return false;
     }
     return true;

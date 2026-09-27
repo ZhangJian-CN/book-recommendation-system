@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "booksearch.h"
+#include "recommendation.h"
 #include "ui_mainwindow.h"
 
 #include <QFormLayout>
@@ -92,6 +93,51 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     bookButtons->addWidget(deleteButton);
     booksLayout->addLayout(bookButtons);
 
+    auto *recommendPage = new QWidget(this);
+    tabs->addTab(recommendPage, QStringLiteral("评分与推荐"));
+    auto *recommendLayout = new QVBoxLayout(recommendPage);
+    recommendLayout->addWidget(new QLabel(QStringLiteral("录入或更新评分（1～5 分）"), this));
+    auto *ratingForm = new QFormLayout;
+    ratingUser_ = new QLineEdit(QStringLiteral("U0"), this);
+    ratingUser_->setObjectName(QStringLiteral("ratingUser"));
+    ratingBook_ = new QLineEdit(QStringLiteral("B003"), this);
+    ratingBook_->setObjectName(QStringLiteral("ratingBook"));
+    ratingScore_ = new QSpinBox(this);
+    ratingScore_->setObjectName(QStringLiteral("ratingScore"));
+    ratingScore_->setRange(1, 5);
+    ratingScore_->setValue(4);
+    ratingForm->addRow(QStringLiteral("用户编号"), ratingUser_);
+    ratingForm->addRow(QStringLiteral("图书编号"), ratingBook_);
+    ratingForm->addRow(QStringLiteral("评分"), ratingScore_);
+    recommendLayout->addLayout(ratingForm);
+    auto *rateButton = new QPushButton(QStringLiteral("保存评分"), this);
+    rateButton->setObjectName(QStringLiteral("rateButton"));
+    recommendLayout->addWidget(rateButton);
+
+    auto *recommendRow = new QHBoxLayout;
+    recommendUser_ = new QLineEdit(QStringLiteral("U0"), this);
+    recommendUser_->setObjectName(QStringLiteral("recommendUser"));
+    topK_ = new QSpinBox(this);
+    topK_->setObjectName(QStringLiteral("topK"));
+    topK_->setRange(1, 1000);
+    topK_->setValue(2);
+    auto *recommendButton = new QPushButton(QStringLiteral("重新推荐"), this);
+    recommendButton->setObjectName(QStringLiteral("recommendButton"));
+    recommendRow->addWidget(new QLabel(QStringLiteral("用户"), this));
+    recommendRow->addWidget(recommendUser_);
+    recommendRow->addWidget(new QLabel(QStringLiteral("Top K"), this));
+    recommendRow->addWidget(topK_);
+    recommendRow->addWidget(recommendButton);
+    recommendLayout->addLayout(recommendRow);
+    recommendTable_ = new QTableWidget(this);
+    recommendTable_->setObjectName(QStringLiteral("recommendTable"));
+    recommendTable_->setColumnCount(4);
+    recommendTable_->setHorizontalHeaderLabels({QStringLiteral("编号"), QStringLiteral("书名"),
+                                                QStringLiteral("分数"), QStringLiteral("来源")});
+    recommendTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    recommendTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    recommendLayout->addWidget(recommendTable_);
+
     connect(searchButton, &QPushButton::clicked, this, [this] {
         selectBook(search_->text().trimmed());
     });
@@ -108,12 +154,16 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     connect(addButton, &QPushButton::clicked, this, [this] { addBook(); });
     connect(saveButton, &QPushButton::clicked, this, [this] { saveSelected(); });
     connect(deleteButton, &QPushButton::clicked, this, [this] { deleteSelected(); });
+    connect(rateButton, &QPushButton::clicked, this, [this] { rateBook(); });
+    connect(recommendButton, &QPushButton::clicked, this, [this] { showRecommendations(); });
+
     QString error;
     if (!library_.load(dataDir_, &error)) {
         QMessageBox::critical(this, QStringLiteral("读取失败"), error);
         tabs->setEnabled(false);
     } else {
         refreshTable();
+        showRecommendations();
         statusBar()->showMessage(QStringLiteral("已加载 %1 本图书、%2 条评分；数据目录：%3")
                                      .arg(library_.books().all().size())
                                      .arg(library_.ratings().size()).arg(dataDir_));
@@ -233,4 +283,43 @@ void MainWindow::deleteSelected()
     stock_->setValue(0);
     refreshTable();
     statusBar()->showMessage(QStringLiteral("已删除并保存图书 %1").arg(id));
+}
+
+void MainWindow::rateBook()
+{
+    const QString userId = ratingUser_->text().trimmed();
+    const QString bookId = ratingBook_->text().trimmed();
+    QString error;
+    if (!library_.rate(userId, bookId, ratingScore_->value(), &error)) {
+        QMessageBox::warning(this, QStringLiteral("评分失败"), error);
+        return;
+    }
+    if (recommendUser_->text().trimmed() == userId)
+        showRecommendations();
+    statusBar()->showMessage(QStringLiteral("已保存 %1 对 %2 的评分").arg(userId, bookId));
+}
+
+void MainWindow::showRecommendations()
+{
+    const QString userId = recommendUser_->text().trimmed();
+    if (!library_.hasUser(userId)) {
+        QMessageBox::warning(this, QStringLiteral("推荐失败"),
+                             QStringLiteral("用户编号 %1 不存在").arg(userId));
+        return;
+    }
+    RecommendationService service(library_.books(), library_.users(), library_.ratings());
+    const auto results = service.recommend(userId, topK_->value());
+    recommendTable_->setRowCount(results.size());
+    for (int row = 0; row < results.size(); ++row) {
+        const Recommendation &result = results[row];
+        const QString source = result.source == RecommendationSource::Collaborative
+                                   ? QStringLiteral("协同过滤预测")
+                                   : QStringLiteral("热门回退（平均分）");
+        const QStringList values{result.bookId, result.title,
+                                 QString::number(result.score, 'f', 4), source};
+        for (int column = 0; column < values.size(); ++column)
+            recommendTable_->setItem(row, column, new QTableWidgetItem(values[column]));
+    }
+    statusBar()->showMessage(QStringLiteral("用户 %1 的 Top %2 推荐已更新")
+                                 .arg(userId).arg(results.size()));
 }

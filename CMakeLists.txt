@@ -12,6 +12,7 @@ add_library(bookcore STATIC
     booksearch.cpp booksearch.h
     csvutil.cpp csvutil.h
     librarystore.cpp librarystore.h
+    recommendation.cpp recommendation.h
 )
 target_link_libraries(bookcore PUBLIC Qt::Core)
 target_compile_features(bookcore PUBLIC cxx_std_17)
@@ -53,6 +54,11 @@ add_executable(hash_smoke hash_smoke.cpp)
 target_link_libraries(hash_smoke PRIVATE bookcore)
 target_compile_definitions(hash_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME hash_smoke COMMAND hash_smoke)
+
+add_executable(core_smoke core_smoke.cpp)
+target_link_libraries(core_smoke PRIVATE bookcore)
+target_compile_definitions(core_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+add_test(NAME core_smoke COMMAND core_smoke)
 
 install(TARGETS BookRecommendation
     BUNDLE  DESTINATION .

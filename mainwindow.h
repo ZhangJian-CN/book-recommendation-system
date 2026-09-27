@@ -29,6 +29,8 @@ private:
     void saveSelected();
     void addBook();
     void deleteSelected();
+    void rateBook();
+    void showRecommendations();
 
     Ui::MainWindow *ui;
     LibraryStore library_;
@@ -42,5 +44,11 @@ private:
     QLineEdit *author_ = nullptr;
     QLineEdit *category_ = nullptr;
     QSpinBox *stock_ = nullptr;
+    QLineEdit *ratingUser_ = nullptr;
+    QLineEdit *ratingBook_ = nullptr;
+    QSpinBox *ratingScore_ = nullptr;
+    QLineEdit *recommendUser_ = nullptr;
+    QSpinBox *topK_ = nullptr;
+    QTableWidget *recommendTable_ = nullptr;
 };
 #endif // MAINWINDOW_H

@@ -21,11 +21,14 @@ public:
     const QVector<User> &users() const { return users_; }
     const QVector<Rating> &ratings() const { return ratings_; }
     const QVector<BorrowRecord> &borrowRecords() const { return borrowRecords_; }
+    bool hasUser(const QString &id) const;
     bool addBook(const Book &book, QString *error);
     bool updateBook(const Book &book, QString *error);
     bool deleteBook(const QString &id, QString *error);
+    bool rate(const QString &userId, const QString &bookId, int score, QString *error);
 
 private:
+    bool saveRatings(QString *error) const;
     QString dataDir_;
     BookRepository books_;
     QVector<User> users_;
