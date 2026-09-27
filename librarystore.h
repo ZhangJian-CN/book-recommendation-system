@@ -26,6 +26,9 @@ public:
     bool updateBook(const Book &book, QString *error);
     bool deleteBook(const QString &id, QString *error);
     bool rate(const QString &userId, const QString &bookId, int score, QString *error);
+    bool borrowBook(const QString &userId, const QString &bookId,
+                    const QString &borrowDate, QString *recordId, QString *error);
+    bool returnBook(const QString &recordId, const QString &returnDate, QString *error);
 
 private:
     bool saveRatings(QString *error) const;

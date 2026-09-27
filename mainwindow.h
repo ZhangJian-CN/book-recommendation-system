@@ -31,6 +31,9 @@ private:
     void deleteSelected();
     void rateBook();
     void showRecommendations();
+    void refreshBorrowTable();
+    void borrowBook();
+    void returnBook();
 
     Ui::MainWindow *ui;
     LibraryStore library_;
@@ -50,5 +53,9 @@ private:
     QLineEdit *recommendUser_ = nullptr;
     QSpinBox *topK_ = nullptr;
     QTableWidget *recommendTable_ = nullptr;
+    QTableWidget *borrowTable_ = nullptr;
+    QLineEdit *borrowUser_ = nullptr;
+    QLineEdit *borrowBook_ = nullptr;
+    QLineEdit *returnRecord_ = nullptr;
 };
 #endif // MAINWINDOW_H

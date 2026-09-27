@@ -29,7 +29,9 @@ int main(int argc, char *argv[])
     {
         MainWindow window(dir.path());
         if (qEnvironmentVariableIsSet("BOOK_SCREENSHOT_PATH")) {
-            if (qEnvironmentVariableIsSet("BOOK_SCREENSHOT_RECOMMEND"))
+            if (qEnvironmentVariableIsSet("BOOK_SCREENSHOT_BORROW"))
+                window.findChild<QTabWidget *>()->setCurrentIndex(2);
+            else if (qEnvironmentVariableIsSet("BOOK_SCREENSHOT_RECOMMEND"))
                 window.findChild<QTabWidget *>()->setCurrentIndex(1);
             window.show();
             app.processEvents();
@@ -49,9 +51,14 @@ int main(int argc, char *argv[])
         auto *showAllButton = window.findChild<QPushButton *>(QStringLiteral("showAllButton"));
         auto *rateButton = window.findChild<QPushButton *>(QStringLiteral("rateButton"));
         auto *recommendTable = window.findChild<QTableWidget *>(QStringLiteral("recommendTable"));
+        auto *borrowButton = window.findChild<QPushButton *>(QStringLiteral("borrowButton"));
+        auto *returnButton = window.findChild<QPushButton *>(QStringLiteral("returnButton"));
+        auto *returnRecord = window.findChild<QLineEdit *>(QStringLiteral("returnRecord"));
+        auto *borrowTable = window.findChild<QTableWidget *>(QStringLiteral("borrowTable"));
         if (!table || !search || !searchButton || !title || !stock || !saveButton
             || !newId || !addButton || !deleteButton || !keyword || !keywordButton
-            || !showAllButton || !rateButton || !recommendTable || table->rowCount() != 4
+            || !showAllButton || !rateButton || !recommendTable || !borrowButton
+            || !returnButton || !returnRecord || !borrowTable || table->rowCount() != 4
             || recommendTable->rowCount() != 2)
             return 3;
 
@@ -81,6 +88,15 @@ int main(int argc, char *argv[])
         deleteButton->click();
         if (table->rowCount() != 4)
             return 7;
+        borrowButton->click();
+        if (borrowTable->rowCount() != 3
+            || returnRecord->text() != QStringLiteral("R003")
+            || table->item(3, 4)->text() != QStringLiteral("1"))
+            return 10;
+        returnButton->click();
+        if (borrowTable->item(2, 5)->text() != QStringLiteral("已归还")
+            || table->item(3, 4)->text() != QStringLiteral("2"))
+            return 11;
         rateButton->click();
         if (recommendTable->rowCount() != 1
             || recommendTable->item(0, 0)->text() != QStringLiteral("B004"))
@@ -90,8 +106,12 @@ int main(int argc, char *argv[])
     MainWindow restarted(dir.path());
     auto *table = restarted.findChild<QTableWidget *>(QStringLiteral("booksTable"));
     auto *recommendTable = restarted.findChild<QTableWidget *>(QStringLiteral("recommendTable"));
-    return table && recommendTable && table->rowCount() == 4
+    auto *borrowTable = restarted.findChild<QTableWidget *>(QStringLiteral("borrowTable"));
+    return table && recommendTable && borrowTable && table->rowCount() == 4
                    && table->item(0, 4)->text() == QStringLiteral("4")
+                   && table->item(3, 4)->text() == QStringLiteral("2")
+                   && borrowTable->rowCount() == 3
+                   && borrowTable->item(2, 5)->text() == QStringLiteral("已归还")
                    && recommendTable->rowCount() == 1
                    && recommendTable->item(0, 0)->text() == QStringLiteral("B004") ? 0 : 9;
 }

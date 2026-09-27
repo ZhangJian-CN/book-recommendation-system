@@ -4,6 +4,7 @@
 #include "ui_mainwindow.h"
 
 #include <QFormLayout>
+#include <QDate>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -138,6 +139,41 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     recommendTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     recommendLayout->addWidget(recommendTable_);
 
+    auto *borrowPage = new QWidget(this);
+    tabs->addTab(borrowPage, QStringLiteral("借阅与归还"));
+    auto *borrowLayout = new QVBoxLayout(borrowPage);
+    borrowLayout->addWidget(new QLabel(QStringLiteral("借出与归还使用本机当天日期；同一用户同一本书只能有一条未归还记录。"), this));
+    auto *borrowForm = new QFormLayout;
+    borrowUser_ = new QLineEdit(QStringLiteral("U0"), this);
+    borrowUser_->setObjectName(QStringLiteral("borrowUser"));
+    borrowBook_ = new QLineEdit(QStringLiteral("B004"), this);
+    borrowBook_->setObjectName(QStringLiteral("borrowBook"));
+    borrowForm->addRow(QStringLiteral("用户编号"), borrowUser_);
+    borrowForm->addRow(QStringLiteral("图书编号"), borrowBook_);
+    borrowLayout->addLayout(borrowForm);
+    auto *borrowButton = new QPushButton(QStringLiteral("借出图书"), this);
+    borrowButton->setObjectName(QStringLiteral("borrowButton"));
+    borrowLayout->addWidget(borrowButton);
+    auto *returnRow = new QHBoxLayout;
+    returnRecord_ = new QLineEdit(this);
+    returnRecord_->setObjectName(QStringLiteral("returnRecord"));
+    returnRecord_->setPlaceholderText(QStringLiteral("输入借阅编号，或点击下方记录"));
+    auto *returnButton = new QPushButton(QStringLiteral("归还图书"), this);
+    returnButton->setObjectName(QStringLiteral("returnButton"));
+    returnRow->addWidget(new QLabel(QStringLiteral("借阅编号"), this));
+    returnRow->addWidget(returnRecord_);
+    returnRow->addWidget(returnButton);
+    borrowLayout->addLayout(returnRow);
+    borrowTable_ = new QTableWidget(this);
+    borrowTable_->setObjectName(QStringLiteral("borrowTable"));
+    borrowTable_->setColumnCount(6);
+    borrowTable_->setHorizontalHeaderLabels({QStringLiteral("记录编号"), QStringLiteral("用户"),
+                                             QStringLiteral("图书"), QStringLiteral("借出日期"),
+                                             QStringLiteral("归还日期"), QStringLiteral("状态")});
+    borrowTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    borrowTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    borrowLayout->addWidget(borrowTable_);
+
     connect(searchButton, &QPushButton::clicked, this, [this] {
         selectBook(search_->text().trimmed());
     });
@@ -156,6 +192,11 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     connect(deleteButton, &QPushButton::clicked, this, [this] { deleteSelected(); });
     connect(rateButton, &QPushButton::clicked, this, [this] { rateBook(); });
     connect(recommendButton, &QPushButton::clicked, this, [this] { showRecommendations(); });
+    connect(borrowButton, &QPushButton::clicked, this, [this] { borrowBook(); });
+    connect(returnButton, &QPushButton::clicked, this, [this] { returnBook(); });
+    connect(borrowTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
+        returnRecord_->setText(borrowTable_->item(row, 0)->text());
+    });
 
     QString error;
     if (!library_.load(dataDir_, &error)) {
@@ -163,6 +204,7 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
         tabs->setEnabled(false);
     } else {
         refreshTable();
+        refreshBorrowTable();
         showRecommendations();
         statusBar()->showMessage(QStringLiteral("已加载 %1 本图书、%2 条评分；数据目录：%3")
                                      .arg(library_.books().all().size())
@@ -322,4 +364,50 @@ void MainWindow::showRecommendations()
     }
     statusBar()->showMessage(QStringLiteral("用户 %1 的 Top %2 推荐已更新")
                                  .arg(userId).arg(results.size()));
+}
+
+void MainWindow::refreshBorrowTable()
+{
+    borrowTable_->setRowCount(library_.borrowRecords().size());
+    for (int row = 0; row < library_.borrowRecords().size(); ++row) {
+        const BorrowRecord &record = library_.borrowRecords()[row];
+        const QStringList values{record.id, record.userId, record.bookId,
+                                 record.borrowDate, record.returnDate,
+                                 record.status == QStringLiteral("borrowed")
+                                     ? QStringLiteral("未归还") : QStringLiteral("已归还")};
+        for (int column = 0; column < values.size(); ++column)
+            borrowTable_->setItem(row, column, new QTableWidgetItem(values[column]));
+    }
+}
+
+void MainWindow::borrowBook()
+{
+    QString recordId;
+    QString error;
+    const QString date = QDate::currentDate().toString(Qt::ISODate);
+    if (!library_.borrowBook(borrowUser_->text().trimmed(), borrowBook_->text().trimmed(),
+                             date, &recordId, &error)) {
+        QMessageBox::warning(this, QStringLiteral("借出失败"), error);
+        return;
+    }
+    returnRecord_->setText(recordId);
+    refreshTable();
+    refreshBorrowTable();
+    showRecommendations();
+    statusBar()->showMessage(QStringLiteral("借出成功：%1，记录编号 %2").arg(date, recordId));
+}
+
+void MainWindow::returnBook()
+{
+    QString error;
+    const QString date = QDate::currentDate().toString(Qt::ISODate);
+    const QString recordId = returnRecord_->text().trimmed();
+    if (!library_.returnBook(recordId, date, &error)) {
+        QMessageBox::warning(this, QStringLiteral("归还失败"), error);
+        return;
+    }
+    refreshTable();
+    refreshBorrowTable();
+    showRecommendations();
+    statusBar()->showMessage(QStringLiteral("归还成功：%1，记录编号 %2").arg(date, recordId));
 }

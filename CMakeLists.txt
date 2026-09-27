@@ -60,6 +60,11 @@ target_link_libraries(core_smoke PRIVATE bookcore)
 target_compile_definitions(core_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_test(NAME core_smoke COMMAND core_smoke)
 
+add_executable(borrow_smoke borrow_smoke.cpp)
+target_link_libraries(borrow_smoke PRIVATE bookcore)
+target_compile_definitions(borrow_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+add_test(NAME borrow_smoke COMMAND borrow_smoke)
+
 install(TARGETS BookRecommendation
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
