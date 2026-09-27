@@ -2,7 +2,7 @@
 
 ## 演示数据
 
-`demo_data/large` 是可重复生成的**合成数据**：100 本图书、40 名用户、800 条评分和 10 条借阅记录。运行 `python tools/generate_large_demo.py` 可重新生成。`large_demo_smoke` 实际调用 `LibraryStore::load` 加载四份 CSV，并核对数量和 U00 的 Top 5 推荐。
+`demo_data/goodbooks` 的书名、作者和评分取自 Goodbooks-10k；显示名、分类占位值、库存和借阅记录为模拟数据。`demo_data/large` 则是完全合成的数据。两套数据都包含 100 本图书、40 名用户、800 条评分和 10 条借阅记录；来源及重建方法见 [演示数据说明](../demo_data/README.md)。`large_demo_smoke` 实际调用 `LibraryStore::load` 分别加载两套四份 CSV，并核对数量和 U00 的 Top 5 推荐。
 
 交互演示前，先把四份 CSV 复制到另一个可写目录，再以 `--data-dir <目录>` 启动程序；不要直接修改仓库中的原始样例。
 
@@ -45,9 +45,9 @@
 | 31 | `books.csv` 不可用时拒绝借阅且内存不变 | `borrow_smoke` |
 | 32 | `borrow_records.csv` 不可用时拒绝借阅且内存不变 | `borrow_smoke` |
 | 33 | 界面增删改查、借还、评分推荐和重启读取 | `mainwindow_smoke` |
-| 34 | 100/40/800/10 数据被加载且可给出 Top 5 | `large_demo_smoke` |
+| 34 | 公开数据子集与合成数据均按 100/40/800/10 加载且可给出 Top 5 | `large_demo_smoke` |
 
-在 Qt 6.11.2 MinGW Debug 构建中运行 `ctest --output-on-failure`，结果为 **6/6 通过**。自动测试使用临时目录或只读读取数据，不修改仓库中的样例。
+在 Qt 6.11.2 MinGW Debug 构建中运行 `ctest --output-on-failure`，结果为 **6/6 通过**，其中 `large_demo_smoke` 已加载两套演示数据。自动测试使用临时目录或只读读取数据，不修改仓库中的样例。
 
 ## 检索性能对比
 
