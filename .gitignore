@@ -1,10 +1,5 @@
-build/
-cmake-build-*/
+﻿/build/
+/.qtcreator/
 *.user
 *.user.*
-*.o
-*.obj
-*.exe
-*.dll
-.idea/
-.vscode/
+*.ui.autosave
