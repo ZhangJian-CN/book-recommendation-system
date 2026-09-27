@@ -46,7 +46,9 @@ add_test(NAME bookrepository_smoke COMMAND bookrepository_smoke)
 add_executable(mainwindow_smoke mainwindow_smoke.cpp mainwindow.cpp mainwindow.h
     mainwindow.ui)
 target_link_libraries(mainwindow_smoke PRIVATE Qt::Widgets bookcore)
-target_compile_definitions(mainwindow_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_compile_definitions(mainwindow_smoke PRIVATE
+    SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    SAMPLE_GOODBOOKS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demo_data/goodbooks")
 add_test(NAME mainwindow_smoke COMMAND mainwindow_smoke)
 set_tests_properties(mainwindow_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

@@ -203,9 +203,19 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
         QMessageBox::critical(this, QStringLiteral("读取失败"), error);
         tabs->setEnabled(false);
     } else {
+        if (!library_.users().isEmpty()) {
+            const QString firstUser = library_.users().first().id;
+            if (!library_.hasUser(ratingUser_->text()))
+                ratingUser_->setText(firstUser);
+            if (!library_.hasUser(recommendUser_->text()))
+                recommendUser_->setText(firstUser);
+            if (!library_.hasUser(borrowUser_->text()))
+                borrowUser_->setText(firstUser);
+        }
         refreshTable();
         refreshBorrowTable();
-        showRecommendations();
+        if (!library_.users().isEmpty())
+            showRecommendations();
         statusBar()->showMessage(QStringLiteral("已加载 %1 本图书、%2 条评分；数据目录：%3")
                                      .arg(library_.books().all().size())
                                      .arg(library_.ratings().size()).arg(dataDir_));

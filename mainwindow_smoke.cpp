@@ -107,11 +107,30 @@ int main(int argc, char *argv[])
     auto *table = restarted.findChild<QTableWidget *>(QStringLiteral("booksTable"));
     auto *recommendTable = restarted.findChild<QTableWidget *>(QStringLiteral("recommendTable"));
     auto *borrowTable = restarted.findChild<QTableWidget *>(QStringLiteral("borrowTable"));
-    return table && recommendTable && borrowTable && table->rowCount() == 4
-                   && table->item(0, 4)->text() == QStringLiteral("4")
-                   && table->item(3, 4)->text() == QStringLiteral("2")
-                   && borrowTable->rowCount() == 3
-                   && borrowTable->item(2, 5)->text() == QStringLiteral("已归还")
-                   && recommendTable->rowCount() == 1
-                   && recommendTable->item(0, 0)->text() == QStringLiteral("B004") ? 0 : 9;
+    if (!table || !recommendTable || !borrowTable || table->rowCount() != 4
+        || table->item(0, 4)->text() != QStringLiteral("4")
+        || table->item(3, 4)->text() != QStringLiteral("2")
+        || borrowTable->rowCount() != 3
+        || borrowTable->item(2, 5)->text() != QStringLiteral("已归还")
+        || recommendTable->rowCount() != 1
+        || recommendTable->item(0, 0)->text() != QStringLiteral("B004"))
+        return 9;
+
+    QTimer::singleShot(0, [] {
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            if (auto *box = qobject_cast<QMessageBox *>(widget))
+                box->accept();
+        }
+    });
+    MainWindow goodbooksWindow(QStringLiteral(SAMPLE_GOODBOOKS_DATA_DIR));
+    auto *ratingUser = goodbooksWindow.findChild<QLineEdit *>(QStringLiteral("ratingUser"));
+    auto *recommendUser = goodbooksWindow.findChild<QLineEdit *>(QStringLiteral("recommendUser"));
+    auto *borrowUser = goodbooksWindow.findChild<QLineEdit *>(QStringLiteral("borrowUser"));
+    auto *goodbooksRecommendations = goodbooksWindow.findChild<QTableWidget *>(
+        QStringLiteral("recommendTable"));
+    return ratingUser && recommendUser && borrowUser && goodbooksRecommendations
+                   && ratingUser->text() == QStringLiteral("U00")
+                   && recommendUser->text() == QStringLiteral("U00")
+                   && borrowUser->text() == QStringLiteral("U00")
+                   && goodbooksRecommendations->rowCount() == 2 ? 0 : 14;
 }
