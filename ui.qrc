@@ -1,5 +1,21 @@
 <RCC>
   <qresource prefix="/ui">
     <file alias="app.qss">styles/app.qss</file>
+    <file alias="icons/spin-plus.png">styles/icons/spin-plus.png</file>
+    <file alias="icons/spin-plus@2x.png">styles/icons/spin-plus@2x.png</file>
+    <file alias="icons/spin-minus.png">styles/icons/spin-minus.png</file>
+    <file alias="icons/spin-minus@2x.png">styles/icons/spin-minus@2x.png</file>
+    <file alias="icons/spin-plus-hover.png">styles/icons/spin-plus-hover.png</file>
+    <file alias="icons/spin-plus-hover@2x.png">styles/icons/spin-plus-hover@2x.png</file>
+    <file alias="icons/spin-minus-hover.png">styles/icons/spin-minus-hover.png</file>
+    <file alias="icons/spin-minus-hover@2x.png">styles/icons/spin-minus-hover@2x.png</file>
+    <file alias="icons/spin-plus-pressed.png">styles/icons/spin-plus-pressed.png</file>
+    <file alias="icons/spin-plus-pressed@2x.png">styles/icons/spin-plus-pressed@2x.png</file>
+    <file alias="icons/spin-minus-pressed.png">styles/icons/spin-minus-pressed.png</file>
+    <file alias="icons/spin-minus-pressed@2x.png">styles/icons/spin-minus-pressed@2x.png</file>
+    <file alias="icons/spin-plus-disabled.png">styles/icons/spin-plus-disabled.png</file>
+    <file alias="icons/spin-plus-disabled@2x.png">styles/icons/spin-plus-disabled@2x.png</file>
+    <file alias="icons/spin-minus-disabled.png">styles/icons/spin-minus-disabled.png</file>
+    <file alias="icons/spin-minus-disabled@2x.png">styles/icons/spin-minus-disabled@2x.png</file>
   </qresource>
 </RCC>

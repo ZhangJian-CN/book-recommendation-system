@@ -72,6 +72,7 @@ QSpinBox *number(const char *name, int minimum, int maximum, int value)
     auto *widget = new QSpinBox;
     widget->setObjectName(QString::fromLatin1(name));
     widget->setRange(minimum, maximum);
+    widget->setButtonSymbols(QAbstractSpinBox::PlusMinus);
     widget->setValue(value);
     widget->setMinimumHeight(36);
     return widget;
@@ -337,7 +338,7 @@ QWidget *MainWindow::buildRecommendPage()
     recommendUser_ = input("recommendUser", QStringLiteral("用户编号"));
     recommendUser_->setMaximumWidth(180);
     topK_ = number("topK", 1, 1000, 2);
-    topK_->setFixedWidth(80);
+    topK_->setFixedWidth(136);
     auto *recommendButton = button(QStringLiteral("重新推荐"), "recommendButton", "primary");
     toolbar->addWidget(label(QStringLiteral("用户"), "muted"));
     toolbar->addWidget(recommendUser_, 1);

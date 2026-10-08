@@ -6,15 +6,22 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFontDatabase>
+#include <QEventLoop>
+#include <QHoverEvent>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QStyleOptionSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -98,6 +105,14 @@ bool checkLayout(MainWindow &window, const QSize &size, bool captureCompact = fa
                 if (auto *scroll = qobject_cast<QScrollArea *>(ancestor)) {
                     scroll->ensureWidgetVisible(widget);
                     QApplication::processEvents();
+                    // Exercise the scrollbar if Qt considers a partially visible editor sufficient.
+                    const QRect frame(widget->mapTo(scroll->viewport(), QPoint()), widget->size());
+                    auto *bar = scroll->verticalScrollBar();
+                    if (frame.top() < 0)
+                        bar->setValue(bar->value() + frame.top());
+                    else if (frame.bottom() >= scroll->viewport()->height())
+                        bar->setValue(bar->value() + frame.bottom() - scroll->viewport()->height() + 1);
+                    QApplication::processEvents();
                     if (!scroll->viewport()->rect().contains(QRect(
                             widget->mapTo(scroll->viewport(), QPoint()), widget->size())))
                         qWarning() << name << "viewport" << scroll->viewport()->rect()
@@ -120,6 +135,178 @@ bool checkLayout(MainWindow &window, const QSize &size, bool captureCompact = fa
     return true;
 }
 
+QRect spinButton(QSpinBox *box, QStyle::SubControl control)
+{
+    QStyleOptionSpinBox option;
+    option.initFrom(box);
+    option.buttonSymbols = box->buttonSymbols();
+    return box->style()->subControlRect(QStyle::CC_SpinBox, &option, control, box);
+}
+
+void spinMouse(QSpinBox *box, QEvent::Type type, const QPoint &point)
+{
+    const bool move = type == QEvent::MouseMove;
+    QMouseEvent event(type, QPointF(point), QPointF(box->mapToGlobal(point)),
+                      move ? Qt::NoButton : Qt::LeftButton,
+                      type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton,
+                      Qt::NoModifier);
+    QApplication::sendEvent(box, &event);
+}
+
+void spinClick(QSpinBox *box, QStyle::SubControl control)
+{
+    const QPoint point = spinButton(box, control).center();
+    spinMouse(box, QEvent::MouseButtonPress, point);
+    spinMouse(box, QEvent::MouseButtonRelease, point);
+}
+
+void spinKey(QWidget *widget, int key, const QString &text = {})
+{
+    QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, text);
+    QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, text);
+    QApplication::sendEvent(widget, &press);
+    QApplication::sendEvent(widget, &release);
+}
+
+bool checkSpinBoxes(MainWindow &window)
+{
+    const QList<QSpinBox *> boxes{get<QSpinBox>(window, "bookStock"),
+                                  get<QSpinBox>(window, "topK"), get<QSpinBox>(window, "ratingScore")};
+    const int minima[]{0, 1, 1}, maxima[]{1000000, 1000, 5}, defaults[]{0, 2, 4};
+    const int middle[]{3, 5, 3};
+    auto *tabs = get<QTabWidget>(window, "mainTabs");
+    for (int index = 0; index < boxes.size(); ++index) {
+        auto *box = boxes[index];
+        tabs->setCurrentIndex(index == 0 ? 0 : 1);
+        QApplication::processEvents();
+        CHECK(box->minimum() == minima[index] && box->maximum() == maxima[index]);
+        CHECK(box->value() == defaults[index] && box->singleStep() == 1 && !box->wrapping());
+        CHECK(box->buttonSymbols() == QAbstractSpinBox::PlusMinus);
+        const QRect minus = spinButton(box, QStyle::SC_SpinBoxDown);
+        const QRect plus = spinButton(box, QStyle::SC_SpinBoxUp);
+        CHECK(minus.size() == QSize(28, 28) && plus.size() == QSize(28, 28));
+        CHECK(minus.right() + 3 == plus.left() && minus.top() == plus.top());
+        CHECK(box->rect().contains(minus) && box->rect().contains(plus));
+        auto *edit = box->findChild<QLineEdit *>();
+        CHECK(edit && edit->geometry().right() < minus.left());
+        get<QLineEdit>(window, index == 0 ? "bookSearch" : "ratingUser")->setFocus();
+        QApplication::processEvents();
+        const QRect editBefore = edit->geometry();
+        box->setFocus();
+        QApplication::processEvents();
+        CHECK(edit->geometry() == editBefore);
+        CHECK(spinButton(box, QStyle::SC_SpinBoxDown) == minus);
+        CHECK(spinButton(box, QStyle::SC_SpinBoxUp) == plus);
+        box->setValue(middle[index]);
+        spinClick(box, QStyle::SC_SpinBoxUp);
+        CHECK(box->value() == middle[index] + 1);
+        spinClick(box, QStyle::SC_SpinBoxDown);
+        CHECK(box->value() == middle[index]);
+        spinKey(box, Qt::Key_Up);
+        CHECK(box->value() == middle[index] + 1);
+        spinKey(box, Qt::Key_Down);
+        CHECK(box->value() == middle[index]);
+        box->setValue(minima[index]);
+        spinClick(box, QStyle::SC_SpinBoxDown);
+        CHECK(box->value() == minima[index]);
+        spinClick(box, QStyle::SC_SpinBoxUp);
+        CHECK(box->value() == minima[index] + 1);
+        box->setValue(maxima[index]);
+        spinClick(box, QStyle::SC_SpinBoxUp);
+        CHECK(box->value() == maxima[index]);
+        spinClick(box, QStyle::SC_SpinBoxDown);
+        CHECK(box->value() == maxima[index] - 1);
+        edit->selectAll();
+        const QString maximum = QString::number(maxima[index]);
+        for (const QChar digit : maximum)
+            spinKey(edit, Qt::Key_0 + digit.digitValue(), QString(digit));
+        box->interpretText();
+        CHECK(box->value() == maxima[index] && box->hasAcceptableInput());
+        if (edit->fontMetrics().horizontalAdvance(edit->text()) + 4 > edit->width())
+            qWarning() << box->objectName() << edit->geometry() << edit->text()
+                       << edit->fontMetrics().horizontalAdvance(edit->text());
+        CHECK(edit->fontMetrics().horizontalAdvance(edit->text()) + 4 <= edit->width());
+        spinKey(edit, Qt::Key_9, QStringLiteral("9"));
+        box->interpretText();
+        CHECK(box->value() >= minima[index] && box->value() <= maxima[index]);
+        box->setValue(middle[index]);
+        box->setEnabled(false);
+        spinClick(box, QStyle::SC_SpinBoxUp);
+        CHECK(box->value() == middle[index]);
+        box->setEnabled(true);
+        box->setValue(defaults[index]);
+    }
+    CHECK(boxes[1]->width() == 136);
+    boxes[1]->setValue(20);
+    spinMouse(boxes[1], QEvent::MouseButtonPress, spinButton(boxes[1], QStyle::SC_SpinBoxUp).center());
+    QEventLoop hold;
+    QTimer::singleShot(900, &hold, &QEventLoop::quit);
+    hold.exec();
+    spinMouse(boxes[1], QEvent::MouseButtonRelease, spinButton(boxes[1], QStyle::SC_SpinBoxUp).center());
+    CHECK(boxes[1]->value() > 21); // Qt's existing repeat timer must still run.
+    boxes[1]->setValue(defaults[1]);
+
+    const QString directory = qEnvironmentVariable("SPIN_SCREENSHOT_DIR");
+    if (!directory.isEmpty()) {
+        CHECK(QDir().mkpath(directory));
+        const qreal ratio = window.devicePixelRatioF();
+        QPixmap sheet(QSize(1060, 502) * ratio);
+        sheet.setDevicePixelRatio(ratio);
+        sheet.fill(QColor("#F4F7F9"));
+        QPainter painter(&sheet);
+        painter.setFont(window.font());
+        painter.setPen(QColor("#172B3A"));
+        const QStringList titles{QStringLiteral("库存 · 0～1000000"), QStringLiteral("Top K · 1～1000"),
+                                 QStringLiteral("评分 · 1～5")};
+        const QStringList states{QStringLiteral("默认"), QStringLiteral("悬停减号"), QStringLiteral("悬停加号"),
+            QStringLiteral("按下减号"), QStringLiteral("按下加号"), QStringLiteral("最小值"),
+            QStringLiteral("最大值"), QStringLiteral("聚焦"), QStringLiteral("整框禁用")};
+        for (int index = 0; index < boxes.size(); ++index) {
+            auto *box = boxes[index];
+            tabs->setCurrentIndex(index == 0 ? 0 : 1);
+            QApplication::processEvents();
+            painter.drawText(150 + index * 300, 28, titles[index]);
+            for (int state = 0; state < states.size(); ++state) {
+                get<QLineEdit>(window, index == 0 ? "bookSearch" : "ratingUser")->setFocus();
+                box->setValue(state == 5 ? minima[index] : (state == 6 || state == 7)
+                                                               ? maxima[index] : middle[index]);
+                auto *edit = box->findChild<QLineEdit *>();
+                edit->deselect();
+                edit->setCursorPosition(edit->text().size());
+                QEvent leave(QEvent::Leave);
+                QApplication::sendEvent(box, &leave);
+                const QPoint point = spinButton(box, state == 1 || state == 3
+                    ? QStyle::SC_SpinBoxDown : QStyle::SC_SpinBoxUp).center();
+                if (state >= 1 && state <= 4) {
+                    QEnterEvent enter(QPointF(point), QPointF(point), QPointF(box->mapToGlobal(point)));
+                    QApplication::sendEvent(box, &enter);
+                    QHoverEvent hover(QEvent::HoverMove, QPointF(point), QPointF(box->mapToGlobal(point)), QPointF(-1, -1));
+                    QApplication::sendEvent(box, &hover);
+                    spinMouse(box, QEvent::MouseMove, point);
+                }
+                if (state == 3 || state == 4)
+                    spinMouse(box, QEvent::MouseButtonPress, point);
+                if (state == 7)
+                    box->setFocus();
+                if (state == 8)
+                    box->setEnabled(false);
+                QApplication::processEvents();
+                if (index == 0)
+                    painter.drawText(20, 74 + state * 48, states[state]);
+                painter.drawPixmap(150 + index * 300, 50 + state * 48, box->grab());
+                if (state == 3 || state == 4)
+                    spinMouse(box, QEvent::MouseButtonRelease, point);
+                box->setEnabled(true);
+            }
+            box->setValue(defaults[index]);
+        }
+        painter.end();
+        CHECK(sheet.save(QDir(directory).filePath("states-" + qEnvironmentVariable("SPIN_SCREENSHOT_TAG", "150") + ".png")));
+    }
+    tabs->setCurrentIndex(0);
+    return true;
+}
+
 bool sampleStates()
 {
     QTemporaryDir dir;
@@ -134,6 +321,7 @@ bool sampleStates()
     CHECK(get<QLabel>(window, "userCount")->text() == "3");
     CHECK(get<QLabel>(window, "ratingCount")->text() == "10");
     CHECK(get<QLabel>(window, "borrowCount")->text() == "2");
+    CHECK(checkSpinBoxes(window));
     auto *save = get<QPushButton>(window, "saveButton");
     auto *remove = get<QPushButton>(window, "deleteBookButton");
     CHECK(!save->isEnabled() && !remove->isEnabled());
@@ -309,6 +497,10 @@ int main(int argc, char *argv[])
 {
     qputenv("QT_FORCE_STDERR_LOGGING", "1");
     QApplication app(argc, argv);
+    // The Windows offscreen plugin does not discover system fonts on its own.
+    if (app.platformName() == QStringLiteral("offscreen")
+        && QFile::exists(QStringLiteral("C:/Windows/Fonts/msyh.ttc")))
+        QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
     qInfo() << "Qt screen:" << app.primaryScreen()->availableGeometry()
             << "DPR:" << app.primaryScreen()->devicePixelRatio();
     return sampleStates() && goodbooksRehearsal() ? 0 : 1;

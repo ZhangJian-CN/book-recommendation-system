@@ -43,8 +43,35 @@ QLineEdit, QSpinBox {
     selection-background-color: #0F766E;
     selection-color: #FFFFFF;
 }
-QLineEdit:focus, QSpinBox:focus { border: 2px solid #0F766E; padding: 4px 8px; }
+QLineEdit:focus { border: 2px solid #0F766E; padding: 4px 8px; }
 QLineEdit:disabled, QSpinBox:disabled { background: #F4F7F9; color: #91A0AE; }
+/* Qt also reserves 28 px for the step control: 42 + 28 leaves 70 px on the right. */
+QSpinBox { padding: 5px 42px 5px 9px; }
+QSpinBox:focus { border: 1px solid #0F766E; padding: 5px 42px 5px 9px; }
+QSpinBox::up-button, QSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: center right;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: #F4F7F9;
+}
+QSpinBox::up-button { right: 4px; }
+QSpinBox::down-button { right: 34px; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #E6F4F1; }
+QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background: #CFEAE4; }
+QSpinBox::up-button:disabled, QSpinBox::up-button:off,
+QSpinBox::down-button:disabled, QSpinBox::down-button:off { background: #F4F7F9; }
+QSpinBox::up-arrow, QSpinBox::down-arrow { width: 12px; height: 12px; }
+QSpinBox::up-arrow { image: url(:/ui/icons/spin-plus.png); }
+QSpinBox::down-arrow { image: url(:/ui/icons/spin-minus.png); }
+QSpinBox::up-arrow:hover { image: url(:/ui/icons/spin-plus-hover.png); }
+QSpinBox::down-arrow:hover { image: url(:/ui/icons/spin-minus-hover.png); }
+QSpinBox::up-arrow:pressed { image: url(:/ui/icons/spin-plus-pressed.png); }
+QSpinBox::down-arrow:pressed { image: url(:/ui/icons/spin-minus-pressed.png); }
+QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off { image: url(:/ui/icons/spin-plus-disabled.png); }
+QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off { image: url(:/ui/icons/spin-minus-disabled.png); }
 QPushButton {
     background: #FFFFFF;
     border: 1px solid #DCE5EB;

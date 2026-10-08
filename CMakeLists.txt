@@ -63,7 +63,7 @@ target_compile_definitions(ui_polish_smoke PRIVATE
 add_test(NAME ui_polish_smoke COMMAND ui_polish_smoke)
 configure_file(ui_screen_1280x720.json ui_screen_1280x720.json COPYONLY)
 set_tests_properties(ui_polish_smoke PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen:configfile=ui_screen_1280x720.json;UI_SCREENSHOT_DIR=")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen:configfile=ui_screen_1280x720.json;UI_SCREENSHOT_DIR=;SPIN_SCREENSHOT_DIR=")
 
 add_executable(hash_smoke hash_smoke.cpp)
 target_link_libraries(hash_smoke PRIVATE bookcore)
