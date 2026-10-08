@@ -4,8 +4,8 @@
 
 ## 演示前
 
-1. 确认当前分支为 `feature/full-project`，运行 `git status --short`。演示时无需合并到 `main`。
-2. 在 Qt Creator 中打开 `CMakeLists.txt`，使用 Qt 6.11.2 MinGW 64-bit 构建。运行 `ctest --test-dir <构建目录> --output-on-failure`；目前已注册 6 个测试程序，测试条件见 [验收数据与测试记录](acceptance_validation.md)。
+1. 美化版本使用 `feature/ui-polish`，原完整版本为 `feature/full-project`；运行 `git status --short` 确认演示版本。演示时无需合并到 `main`。
+2. 在 Qt Creator 中打开 `CMakeLists.txt`，使用 Qt 6.11.2 MinGW 64-bit 构建。运行 `ctest --test-dir <构建目录> --output-on-failure`；美化版本已注册 7 个测试程序，新增界面检查见 [UI 美化验证记录](ui_polish_validation.md)，业务与性能条件见 [验收数据与测试记录](acceptance_validation.md)。
 3. 小样例启动参数设为 `--data-dir <一个尚不存在的可写目录>`。程序会自动复制四份内置样例；重启时使用同一目录。
 4. 公开数据演示先将 `demo_data/goodbooks` 的四份业务 CSV 复制到另一个可写目录，再用该目录作为 `--data-dir`。小样例与公开数据各用一个目录；完全合成的 `demo_data/large` 可留作备用测试。
 
@@ -41,4 +41,5 @@
 - 该次排练发现内置资源首次复制出的 CSV 带只读属性，导致第一次保存失败；已在 `f1b6c36` 修复新目录初始化，并在新目录验证四份文件均可写。排练目录的只读属性已当场修复，随后成功完成上述操作。
 - 2026-09-28 Goodbooks 子集实际排练：使用独立可写目录，界面核对状态栏 100 本图书、800 条评分、B001《The Hunger Games》、B100《The Poisonwood Bible》及 10 条模拟借阅记录。U00 的 Top 5 初次显示 B051、B059、B068、B085、B090；给 U00/B051 录入 4 分后，`ratings.csv` 新增 `U00,B051,4`，B051 从 Top 5 消失。关闭并用同一目录重启后，界面无“U0 不存在”弹窗，默认推荐用户为 U00，B051 仍未进入 Top 5。操作人与本地 CSV 均确认结果符合预期。
 - 该次排练发现真实数据启动时默认用户写死为 U0，已在 `72991d5` 改为选取数据中的首个用户，并增加 Goodbooks 启动测试；重新构建后 6/6 CTest 通过。
+- 2026-10-08 UI 美化自动按钮排练：干净临时副本中完成小样例核心链路与 Goodbooks 评分移出候选、关闭窗口后重新加载；7/7 CTest 通过。原生 Qt 三页截图、1000×680 布局、实际 DPR=1.5 及 Qt 覆盖 DPR=1.25 的结果见 [UI 美化验证记录](ui_polish_validation.md)。该记录不替代两名成员的现场演示。
 - 待现场核对：演示录屏或截图、现场耗时与两人讲解反馈。此项需要实际排练，不能由自动测试代替。

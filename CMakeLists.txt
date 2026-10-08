@@ -21,9 +21,11 @@ qt_add_executable(BookRecommendation
     WIN32 MACOSX_BUNDLE
     main.cpp
     mainwindow.cpp
+    mainwindow_ui.cpp
     mainwindow.h
     mainwindow.ui
     seed.qrc
+    ui.qrc
 )
 
 qt_add_translations(
@@ -43,14 +45,25 @@ target_link_libraries(bookrepository_smoke PRIVATE bookcore)
 enable_testing()
 add_test(NAME bookrepository_smoke COMMAND bookrepository_smoke)
 
-add_executable(mainwindow_smoke mainwindow_smoke.cpp mainwindow.cpp mainwindow.h
-    mainwindow.ui)
+add_executable(mainwindow_smoke mainwindow_smoke.cpp mainwindow.cpp mainwindow_ui.cpp
+    mainwindow.h mainwindow.ui ui.qrc)
 target_link_libraries(mainwindow_smoke PRIVATE Qt::Widgets bookcore)
 target_compile_definitions(mainwindow_smoke PRIVATE
     SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     SAMPLE_GOODBOOKS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demo_data/goodbooks")
 add_test(NAME mainwindow_smoke COMMAND mainwindow_smoke)
 set_tests_properties(mainwindow_smoke PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(ui_polish_smoke ui_polish_smoke.cpp mainwindow.cpp mainwindow_ui.cpp
+    mainwindow.h mainwindow.ui ui.qrc)
+target_link_libraries(ui_polish_smoke PRIVATE Qt::Widgets bookcore)
+target_compile_definitions(ui_polish_smoke PRIVATE
+    SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    SAMPLE_GOODBOOKS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demo_data/goodbooks")
+add_test(NAME ui_polish_smoke COMMAND ui_polish_smoke)
+configure_file(ui_screen_1280x720.json ui_screen_1280x720.json COPYONLY)
+set_tests_properties(ui_polish_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen:configfile=ui_screen_1280x720.json;UI_SCREENSHOT_DIR=")
 
 add_executable(hash_smoke hash_smoke.cpp)
 target_link_libraries(hash_smoke PRIVATE bookcore)

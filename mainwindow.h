@@ -7,6 +7,9 @@
 class QLineEdit;
 class QSpinBox;
 class QTableWidget;
+class QLabel;
+class QPushButton;
+class QStringListModel;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -23,6 +26,13 @@ public:
     ~MainWindow() override;
 
 private:
+    QWidget *buildBooksPage();
+    QWidget *buildRecommendPage();
+    QWidget *buildBorrowPage();
+    void refreshSummary();
+    void updateBookSelection();
+    void updateBorrowSelection();
+    void showDataDirectory();
     void refreshTable();
     void showBookRows(const QVector<int> &rows);
     void selectBook(const QString &id);
@@ -57,5 +67,17 @@ private:
     QLineEdit *borrowUser_ = nullptr;
     QLineEdit *borrowBook_ = nullptr;
     QLineEdit *returnRecord_ = nullptr;
+    QLabel *bookSummary_ = nullptr;
+    QLabel *recommendSummary_ = nullptr;
+    QLabel *borrowSummary_ = nullptr;
+    QLabel *bookSelection_ = nullptr;
+    QLabel *borrowSelection_ = nullptr;
+    QLabel *booksEmpty_ = nullptr;
+    QLabel *recommendEmpty_ = nullptr;
+    QLabel *borrowEmpty_ = nullptr;
+    QLabel *counts_[4] = {};
+    QPushButton *saveButton_ = nullptr;
+    QPushButton *deleteButton_ = nullptr;
+    QStringListModel *bookIds_ = nullptr;
 };
 #endif // MAINWINDOW_H
