@@ -1,3 +1,4 @@
+// 业务层把图书、用户、评分和借阅串起来，load、rate、addBook/updateBook/deleteBook 是中期入口。
 #include "librarystore.h"
 #include "csvutil.h"
 
@@ -7,6 +8,8 @@
 #include <QSaveFile>
 #include <QSet>
 #include <limits>
+
+//LibraryStore 检查用户和图书是否存在、评分是否有效，并决定新增还是更新记录；然后调用 Csv::write 完成文件写入。
 
 namespace {
 bool validId(const QString &id)
@@ -67,6 +70,7 @@ void clearBorrowTransaction(const QDir &dir)
 
 bool recoverBorrowTransaction(const QDir &dir, QString *error)
 {
+    // pending 表示两份文件尚未整体提交，需要恢复备份；committed 表示已完成，只清理残留。
     QFile marker(markerPath(dir));
     if (!marker.exists())
         return true;
@@ -104,6 +108,8 @@ bool saveBorrowRecords(const QDir &dir, const QVector<BorrowRecord> &records,
 bool saveBorrowAndBooks(const QDir &dir, const BookRepository &books,
                         const QVector<BorrowRecord> &records, QString *error)
 {
+    // 借还同时修改库存文件和借阅文件：先备份，再写 pending，保存两份文件，最后写 committed。
+    // 启动及再次保存时检查残留标记；这是应用层恢复机制，不是数据库事务或断电保证。
     if (!recoverBorrowTransaction(dir, error))
         return false;
     const QString booksName = QStringLiteral("books.csv");
@@ -136,6 +142,8 @@ bool saveBorrowAndBooks(const QDir &dir, const BookRepository &books,
 
 bool LibraryStore::load(const QString &dataDir, QString *error)
 {
+    // 加载顺序：图书 -> 用户 -> 评分 -> 借阅；后两者需要引用前两者的有效编号。
+    // 各类记录先存到局部变量，全部通过校验后才替换成员，避免只加载一部分。
     const QDir dir(dataDir);
     if (!recoverBorrowTransaction(dir, error))
         return false;
@@ -148,6 +156,7 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
                    QStringLiteral("user_id,name"), 2, &rows, error))
         return false;
     QVector<User> users;
+    // 用户集合既检查重复编号，也为评分及借阅提供引用存在性检查。
     QSet<QString> userIds;
     for (int i = 0; i < rows.size(); ++i) {
         const User user{rows[i][0], rows[i][1]};
@@ -164,11 +173,13 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
                    QStringLiteral("user_id,book_id,score"), 3, &rows, error))
         return false;
     QVector<Rating> ratings;
+    // ratingKey 把用户编号与图书编号组成一对键，防止同一组合有多行评分。
     QSet<QString> ratingKeys;
     for (int i = 0; i < rows.size(); ++i) {
         bool scoreOk = false;
         const int score = rows[i][2].toInt(&scoreOk);
         const Rating rating{rows[i][0], rows[i][1], score};
+        // 校验引用存在、评分为 1～5，且同一用户/图书组合不能在文件中重复。
         const QString key = ratingKey(rating.userId, rating.bookId);
         if (!userIds.contains(rating.userId) || !books.findById(rating.bookId)
             || !scoreOk || score < 1 || score > 5 || ratingKeys.contains(key)) {
@@ -185,6 +196,7 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
         return false;
     QVector<BorrowRecord> records;
     QSet<QString> recordIds;
+    // activeLoans 只记录未归还组合，已归还历史不阻止再次借阅。
     QSet<QString> activeLoans;
     for (int i = 0; i < rows.size(); ++i) {
         const BorrowRecord record{rows[i][0], rows[i][1], rows[i][2],
@@ -209,6 +221,7 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
         records.append(record);
     }
 
+    // 四类记录全通过校验后才更新全部成员；后续保存使用这个数据目录。
     dataDir_ = dir.absolutePath();
     books_ = books;
     users_ = users;
@@ -219,6 +232,7 @@ bool LibraryStore::load(const QString &dataDir, QString *error)
 
 bool LibraryStore::hasUser(const QString &id) const
 {
+    // 用户目前顺序扫描，时间 O(U)；这与图书的哈希查询是不同路径。
     for (const User &user : users_) {
         if (user.id == id)
             return true;
@@ -228,10 +242,13 @@ bool LibraryStore::hasUser(const QString &id) const
 
 bool LibraryStore::addBook(const Book &book, QString *error)
 {
+    // 先备份内存，再新增并保存；文件保存失败恢复旧仓库，界面据返回值显示失败。
+    // before 同时备份实体及索引；BookIndex 深拷贝使恢复时不会共享链表结点。
     const BookRepository before = books_;
     if (!books_.insert(book, error))
         return false;
     if (!books_.save(QDir(dataDir_).filePath(QStringLiteral("books.csv")), error)) {
+        // 保存失败恢复内存，避免刷新界面时错误地显示本次新增已成功。
         books_ = before;
         return false;
     }
@@ -240,6 +257,7 @@ bool LibraryStore::addBook(const Book &book, QString *error)
 
 bool LibraryStore::updateBook(const Book &book, QString *error)
 {
+    // 图书修改采用与新增相同的“内存备份 -> 修改 -> 保存 -> 失败回滚”流程。
     const BookRepository before = books_;
     if (!books_.update(book, error))
         return false;
@@ -252,6 +270,7 @@ bool LibraryStore::updateBook(const Book &book, QString *error)
 
 bool LibraryStore::deleteBook(const QString &id, QString *error)
 {
+    // 保留引用完整性：有评分或任何借阅历史（包括已归还）的图书都不能删除。
     for (const Rating &rating : ratings_) {
         if (rating.bookId == id) {
             *error = QStringLiteral("图书 %1 有评分记录，不能删除").arg(id);
@@ -276,6 +295,7 @@ bool LibraryStore::deleteBook(const QString &id, QString *error)
 
 bool LibraryStore::saveRatings(QString *error) const
 {
+    // 把评分实体按 user_id,book_id,score 转为 CSV，实际写入由 Csv::write 处理。
     QVector<QStringList> rows;
     for (const Rating &rating : ratings_)
         rows.append({rating.userId, rating.bookId, QString::number(rating.score)});
@@ -286,22 +306,28 @@ bool LibraryStore::saveRatings(QString *error) const
 bool LibraryStore::rate(const QString &userId, const QString &bookId,
                         int score, QString *error)
 {
+    // 先校验用户、图书和评分范围；已有组合更新分数，否则追加，保存失败回滚。
+    // 此处保存评分记录；评分矩阵由 RecommendationService 在下一次推荐时重新建立。
     if (!hasUser(userId) || !books_.findById(bookId) || score < 1 || score > 5) {
         *error = QStringLiteral("用户、图书不存在或评分不在 1～5 范围内");
         return false;
     }
     const QVector<Rating> before = ratings_;
+    // found 区分“更新”与“新增”，保证同一用户/图书组合只有一条评分记录。
     bool found = false;
     for (Rating &rating : ratings_) {
         if (rating.userId == userId && rating.bookId == bookId) {
+            // 引用遍历直接修改评分；命中后结束，不再追加重复记录。
             rating.score = score;
             found = true;
             break;
         }
     }
+    // 没有原记录才追加，新评分会在下一次构造矩阵时填到对应行列。
     if (!found)
         ratings_.append({userId, bookId, score});
     if (!saveRatings(error)) {
+        // 保存失败恢复原评分数组；界面接到 false 后显示错误，不刷新成功状态。
         ratings_ = before;
         return false;
     }
@@ -311,6 +337,7 @@ bool LibraryStore::rate(const QString &userId, const QString &bookId,
 bool LibraryStore::borrowBook(const QString &userId, const QString &bookId,
                               const QString &borrowDate, QString *recordId, QString *error)
 {
+    // 借出要求库存充足、日期合法且没有同用户同图书的活动借阅；编号按现有最大 R 编号续增。
     const QDate date = QDate::fromString(borrowDate, Qt::ISODate);
     const Book *current = books_.findById(bookId);
     if (!hasUser(userId) || !current) {
@@ -368,6 +395,7 @@ bool LibraryStore::borrowBook(const QString &userId, const QString &bookId,
 bool LibraryStore::returnBook(const QString &recordId, const QString &returnDate,
                               QString *error)
 {
+    // 仅未归还记录可归还；日期不能早于借出日期（允许当天），同时恢复一份可借库存。
     const QDate date = QDate::fromString(returnDate, Qt::ISODate);
     if (!date.isValid() || date.toString(Qt::ISODate) != returnDate) {
         *error = QStringLiteral("归还日期必须是有效的 YYYY-MM-DD");

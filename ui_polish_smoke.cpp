@@ -9,6 +9,7 @@
 #include <QFontDatabase>
 #include <QEventLoop>
 #include <QHoverEvent>
+#include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -74,12 +75,27 @@ bool capturePages(MainWindow &window, const QString &prefix)
     if (directory.isEmpty())
         return true;
     CHECK(QDir().mkpath(directory));
+    window.activateWindow();
     auto *tabs = get<QTabWidget>(window, "mainTabs");
     const QStringList pages{QStringLiteral("books"), QStringLiteral("recommend"), QStringLiteral("borrow")};
     for (int page = 0; page < pages.size(); ++page) {
         tabs->setCurrentIndex(page);
+        const char *fields[]{"bookSearch", "recommendUser", "borrowUser"};
+        get<QLineEdit>(window, fields[page])->setFocus();
         QApplication::processEvents();
         CHECK(window.grab().save(QDir(directory).filePath(prefix + "-" + pages[page] + ".png")));
+        const char *focusFields[]{"bookTitle", "ratingScore", "returnRecord"};
+        window.findChild<QWidget *>(QString::fromLatin1(focusFields[page]))->setFocus();
+        QApplication::processEvents();
+        CHECK(window.grab().save(QDir(directory).filePath(prefix + "-" + pages[page] + "-focus.png")));
+        const char *tables[]{"booksTable", "recommendTable", "borrowTable"};
+        auto *table = get<QTableWidget>(window, tables[page]);
+        if (table->rowCount() && table->selectedItems().isEmpty())
+            table->selectRow(0);
+        table->setFocus(Qt::TabFocusReason);
+        QApplication::processEvents();
+        CHECK(table->hasFocus());
+        CHECK(window.grab().save(QDir(directory).filePath(prefix + "-" + pages[page] + "-table-focus.png")));
     }
     return true;
 }
@@ -307,6 +323,67 @@ bool checkSpinBoxes(MainWindow &window)
     return true;
 }
 
+bool checkResultHeights(MainWindow &window, bool large)
+{
+    auto *tabs = get<QTabWidget>(window, "mainTabs");
+    const char *names[]{"booksTable", "recommendTable", "borrowTable"};
+    const int minimumRows[]{5, 3, 4};
+    const int maximumRows[]{9, 8, 9};
+    for (int page = 0; page < 3; ++page) {
+        tabs->setCurrentIndex(page);
+        for (int i = 0; i < 3; ++i)
+            QApplication::processEvents();
+        auto *table = get<QTableWidget>(window, names[page]);
+        const int capacity = qBound(minimumRows[page], table->rowCount(), maximumRows[page]);
+        const int desired = table->horizontalHeader()->height()
+            + capacity * table->verticalHeader()->defaultSectionSize()
+            + (table->horizontalScrollBar()->isVisible() ? table->horizontalScrollBar()->height() : 0);
+        CHECK(table->height() <= desired);
+        CHECK(table->parentWidget()->height() <= tabs->currentWidget()->height() - 16);
+        // With enough room, small data reserves viewport rows without adding model items.
+        if (!large)
+            CHECK(table->height() == desired);
+        if (large && page != 1)
+            CHECK(table->verticalScrollBar()->maximum() > 0);
+        CHECK(table->frameWidth() == 0 && table->focusPolicy() != Qt::NoFocus);
+    }
+    tabs->setCurrentIndex(0);
+    return true;
+}
+
+bool checkTableFocus(MainWindow &window)
+{
+    auto *tabs = get<QTabWidget>(window, "mainTabs");
+    const char *tables[]{"booksTable", "recommendTable", "borrowTable"};
+    const char *fields[]{"bookSearch", "recommendUser", "borrowUser"};
+    for (int page = 0; page < 3; ++page) {
+        tabs->setCurrentIndex(page);
+        auto *table = get<QTableWidget>(window, tables[page]);
+        table->selectRow(0);
+        table->scrollToTop();
+        table->setFocus(Qt::TabFocusReason);
+        QApplication::processEvents();
+        CHECK(table->hasFocus() && table->frameWidth() == 0);
+        auto marker = [table] {
+            const QPixmap capture = table->viewport()->grab();
+            return capture.toImage().pixelColor(0, qRound(8 * capture.devicePixelRatio()));
+        };
+        CHECK(marker() == QColor("#245C4D"));
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(table, &down);
+        CHECK(table->currentRow() == 1);
+        table->selectRow(0);
+        QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+        QApplication::sendEvent(table, &tab);
+        CHECK(!table->hasFocus());
+        get<QLineEdit>(window, fields[page])->setFocus();
+        QApplication::processEvents();
+        CHECK(table->frameWidth() == 0 && marker() == QColor("#91B19E"));
+    }
+    tabs->setCurrentIndex(0);
+    return true;
+}
+
 bool sampleStates()
 {
     QTemporaryDir dir;
@@ -322,6 +399,27 @@ bool sampleStates()
     CHECK(get<QLabel>(window, "ratingCount")->text() == "10");
     CHECK(get<QLabel>(window, "borrowCount")->text() == "2");
     CHECK(checkSpinBoxes(window));
+    CHECK(checkResultHeights(window, false));
+    for (const char *name : {"saveButton", "addBookButton", "rateButton"})
+        CHECK(get<QPushButton>(window, name)->icon().isNull());
+    CHECK(get<QLabel>(window, "bookCount")->font().family() == QStringLiteral("Segoe UI"));
+    CHECK(get<QTableWidget>(window, "recommendTable")->item(0, 2)->font().family() == QStringLiteral("Segoe UI"));
+    CHECK(get<QTableWidget>(window, "borrowTable")->item(0, 3)->font().family() == QStringLiteral("Segoe UI"));
+    CHECK(capturePages(window, QStringLiteral("neutral")));
+    CHECK(get<QLabel>(window, "bookSelectionTitle")->text() == QStringLiteral("尚未选择图书"));
+    CHECK(!get<QWidget>(window, "bookSelectionCard")->property("selected").toBool());
+    auto *tabs = get<QTabWidget>(window, "mainTabs");
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    auto *rating = get<QSpinBox>(window, "ratingScore");
+    auto *rate = get<QPushButton>(window, "rateButton");
+    const int gap = rate->mapTo(&window, QPoint()).y()
+        - rating->mapTo(&window, QPoint(0, rating->height())).y();
+    CHECK(gap >= 8 && gap <= 24);
+    CHECK(get<QWidget>(window, "ratingCard")->height() < tabs->currentWidget()->height() - 40);
+    tabs->setCurrentIndex(0);
+    auto *directoryLabel = get<QLabel>(window, "datasetLabel");
+    CHECK(directoryLabel->toolTip() == QDir::toNativeSeparators(dir.path()));
     auto *save = get<QPushButton>(window, "saveButton");
     auto *remove = get<QPushButton>(window, "deleteBookButton");
     CHECK(!save->isEnabled() && !remove->isEnabled());
@@ -336,9 +434,61 @@ bool sampleStates()
     search->setText("B001");
     get<QPushButton>(window, "searchButton")->click();
     CHECK(save->isEnabled() && remove->isEnabled());
+    CHECK(get<QWidget>(window, "bookSelectionCard")->property("selected").toBool());
+    const QString savedTitle = get<QLabel>(window, "bookSelectionTitle")->text();
+    CHECK(savedTitle == QStringLiteral("算法图解"));
+    get<QLineEdit>(window, "bookTitle")->setText(QStringLiteral("尚未保存的书名"));
+    CHECK(get<QLabel>(window, "bookSelectionTitle")->text() == savedTitle);
+    get<QLineEdit>(window, "bookTitle")->setText(savedTitle);
+    search->setText("B0");
+    search->completer()->setCompletionPrefix(QStringLiteral("B0"));
+    search->completer()->complete();
+    QApplication::processEvents();
+    auto *popup = search->completer()->popup();
+    CHECK(popup->model()->rowCount() == 4 && !popup->styleSheet().isEmpty());
+    const QString screenshotDir = qEnvironmentVariable("UI_SCREENSHOT_DIR");
+    if (!screenshotDir.isEmpty()) {
+        CHECK(QDir().mkpath(screenshotDir));
+        CHECK(popup->grab().save(QDir(screenshotDir).filePath("id-completion.png")));
+    }
+    popup->hide();
+    search->setText("B001");
     get<QLineEdit>(window, "returnRecord")->setText("R001");
     CHECK(get<QLabel>(window, "borrowSelection")->text().contains(QStringLiteral("未归还")));
     CHECK(get<QTableWidget>(window, "borrowTable")->item(0, 4)->text() == QStringLiteral("—"));
+    tabs->setCurrentIndex(2);
+    QApplication::processEvents();
+    const auto *recordSummary = get<QLabel>(window, "borrowSelection");
+    const auto *returnButton = get<QPushButton>(window, "returnButton");
+    const int returnGap = returnButton->mapTo(&window, QPoint()).y()
+        - recordSummary->mapTo(&window, QPoint(0, recordSummary->height())).y();
+    CHECK(returnGap >= 10 && returnGap <= 14);
+    CHECK(get<QWidget>(window, "borrowCard")->height() < tabs->currentWidget()->height());
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("借阅记录 R001 · 未归还"));
+    get<QLineEdit>(window, "returnRecord")->setText("missing-record");
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("借阅记录 · 2 条"));
+    get<QLineEdit>(window, "returnRecord")->setText("R001");
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("借阅记录 R001 · 未归还"));
+    get<QLineEdit>(window, "recommendUser")->setText("unsubmitted-user");
+    get<QSpinBox>(window, "topK")->setValue(1);
+    tabs->setCurrentIndex(1);
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("用户 U0 · 2 条推荐"));
+    CHECK(recommendations->rowCount() == 2 && recommendations->item(0, 0)->text() == "B003");
+    tabs->setCurrentIndex(0);
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("已选中图书 B001"));
+    CHECK(get<QLineEdit>(window, "recommendUser")->text() == "unsubmitted-user");
+    CHECK(get<QSpinBox>(window, "topK")->value() == 1);
+    get<QLineEdit>(window, "recommendUser")->setText("U0");
+    get<QSpinBox>(window, "topK")->setValue(2);
+    CHECK(checkTableFocus(window));
+    for (const char *name : {"booksTable", "recommendTable", "borrowTable"}) {
+        auto *table = get<QTableWidget>(window, name);
+        for (int row = 0; row < table->rowCount(); ++row)
+            for (int column = 0; column < table->columnCount(); ++column) {
+                CHECK(!table->cellWidget(row, column));
+                CHECK(table->item(row, column)->text() == table->item(row, column)->toolTip());
+            }
+    }
     CHECK(capturePages(window, QStringLiteral("sample") + qEnvironmentVariable("UI_SCREENSHOT_TAG")));
     get<QTabWidget>(window, "mainTabs")->setCurrentIndex(0);
     search->setFocus();
@@ -363,6 +513,17 @@ bool sampleStates()
     get<QLineEdit>(window, "keywordSearch")->setText("no-such-title");
     get<QPushButton>(window, "keywordButton")->click();
     CHECK(table->rowCount() == 0 && !get<QLabel>(window, "booksEmpty")->isHidden());
+    tabs->setCurrentIndex(0);
+    table->setFocus(Qt::TabFocusReason);
+    QApplication::processEvents();
+    CHECK(table->hasFocus() && table->frameWidth() == 0);
+    CHECK(table->viewport()->grab().toImage().pixelColor(4, 0) == QColor("#245C4D"));
+    CHECK(table->height() == table->horizontalHeader()->height() + table->verticalHeader()->defaultSectionSize());
+    if (!screenshotDir.isEmpty()) {
+        tabs->setCurrentIndex(0);
+        QApplication::processEvents();
+        CHECK(window.grab().save(QDir(screenshotDir).filePath("books-empty.png")));
+    }
     get<QPushButton>(window, "showAllButton")->click();
     CHECK(get<QLabel>(window, "booksEmpty")->isHidden());
 
@@ -413,12 +574,28 @@ bool sampleStates()
     get<QPushButton>(window, "rateButton")->click();
     CHECK(recommendations->rowCount() == 0);
     CHECK(!get<QLabel>(window, "recommendEmpty")->isHidden());
+    if (!screenshotDir.isEmpty()) {
+        tabs->setCurrentIndex(1);
+        QApplication::processEvents();
+        CHECK(window.grab().save(QDir(screenshotDir).filePath("recommend-empty.png")));
+    }
     const QString summary = get<QLabel>(window, "recommendSummary")->text();
+    tabs->setCurrentIndex(1);
     get<QLineEdit>(window, "recommendUser")->setText("invalid-user");
     answerDialog(window);
     get<QPushButton>(window, "recommendButton")->click();
     CHECK(get<QLineEdit>(window, "recommendUser")->text() == "invalid-user");
     CHECK(get<QLabel>(window, "recommendSummary")->text() == summary);
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("推荐失败：用户编号不存在"));
+    // Exercise the real operation timeout, then restore the last successful result summary.
+    QEventLoop statusTimeout;
+    QTimer::singleShot(5300, &statusTimeout, &QEventLoop::quit);
+    statusTimeout.exec();
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("用户 U0 · 0 条推荐"));
+    CHECK(get<QLineEdit>(window, "recommendUser")->text() == "invalid-user");
+    CHECK(recommendations->rowCount() == 0);
+    tabs->setCurrentIndex(2);
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("借阅记录 R003 · 已归还"));
 
     bool pathChecked = false;
     QTimer::singleShot(0, &window, [&] {
@@ -430,6 +607,18 @@ bool sampleStates()
     get<QPushButton>(window, "dataDirectoryButton")->click();
     CHECK(pathChecked);
 
+    QTemporaryDir longDirectory(QDir::tempPath() + "/" + QString(90, QChar(0x957F)) + "-XXXXXX");
+    CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), longDirectory));
+    MainWindow longName(longDirectory.path());
+    longName.show();
+    QApplication::processEvents();
+    auto *longLabel = get<QLabel>(longName, "datasetLabel");
+    CHECK(longLabel->fontMetrics().horizontalAdvance(longLabel->text()) > longLabel->width());
+    CHECK(longLabel->toolTip() == QDir::toNativeSeparators(longDirectory.path()));
+    CHECK(longName.width() <= longName.screen()->availableGeometry().width() - 32);
+    if (!screenshotDir.isEmpty())
+        CHECK(longName.grab().save(QDir(screenshotDir).filePath("neutral-and-long-directory.png")));
+
     QTemporaryDir emptyDir;
     CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), emptyDir));
     QFile records(emptyDir.filePath("borrow_records.csv"));
@@ -439,6 +628,12 @@ bool sampleStates()
     MainWindow emptyBorrows(emptyDir.path());
     CHECK(get<QLabel>(emptyBorrows, "borrowCount")->text() == "0");
     CHECK(!get<QLabel>(emptyBorrows, "borrowEmpty")->isHidden());
+    if (!screenshotDir.isEmpty()) {
+        emptyBorrows.show();
+        get<QTabWidget>(emptyBorrows, "mainTabs")->setCurrentIndex(2);
+        QApplication::processEvents();
+        CHECK(emptyBorrows.grab().save(QDir(screenshotDir).filePath("borrow-empty.png")));
+    }
     return true;
 }
 
@@ -456,6 +651,23 @@ bool goodbooksRehearsal()
         CHECK(get<QLabel>(window, "userCount")->text() == "40");
         CHECK(get<QLabel>(window, "ratingCount")->text() == "800");
         CHECK(get<QLabel>(window, "borrowCount")->text() == "10");
+        CHECK(checkResultHeights(window, true));
+        auto *books = get<QTableWidget>(window, "booksTable");
+        const int fullHeight = books->height();
+        get<QLineEdit>(window, "keywordSearch")->setText("Poisonwood");
+        get<QPushButton>(window, "keywordButton")->click();
+        for (int i = 0; i < 3; ++i)
+            QApplication::processEvents();
+        CHECK(books->rowCount() == 1 && books->height() < fullHeight);
+        const int filteredHeight = books->height();
+        get<QTabWidget>(window, "mainTabs")->setCurrentIndex(1);
+        get<QTabWidget>(window, "mainTabs")->setCurrentIndex(0);
+        CHECK(books->rowCount() == 1 && books->height() == filteredHeight);
+        CHECK(get<QLineEdit>(window, "keywordSearch")->text() == "Poisonwood");
+        get<QPushButton>(window, "showAllButton")->click();
+        for (int i = 0; i < 3; ++i)
+            QApplication::processEvents();
+        CHECK(books->rowCount() == 100 && books->height() == fullHeight);
         auto *search = get<QLineEdit>(window, "bookSearch");
         search->setText("B100");
         get<QPushButton>(window, "searchButton")->click();
@@ -475,6 +687,26 @@ bool goodbooksRehearsal()
         }
         get<QLineEdit>(window, "returnRecord")->setText("R001");
         CHECK(capturePages(window, QStringLiteral("goodbooks") + qEnvironmentVariable("UI_SCREENSHOT_TAG")));
+        const QSize regularSize = window.size();
+        CHECK(checkLayout(window, QSize(1000, 680)));
+        CHECK(checkResultHeights(window, true));
+        CHECK(capturePages(window, QStringLiteral("goodbooks-compact")));
+        window.resize(regularSize);
+        get<QSpinBox>(window, "topK")->setValue(1000);
+        get<QPushButton>(window, "recommendButton")->click();
+        get<QTabWidget>(window, "mainTabs")->setCurrentIndex(1);
+        QApplication::processEvents();
+        CHECK(recommendations->rowCount() > 8 && recommendations->verticalScrollBar()->maximum() > 0);
+        CHECK(recommendations->height() <= recommendations->horizontalHeader()->height()
+              + 8 * recommendations->verticalHeader()->defaultSectionSize());
+        get<QSpinBox>(window, "topK")->setValue(5);
+        get<QPushButton>(window, "recommendButton")->click();
+        get<QPushButton>(window, "borrowButton")->click();
+        CHECK(get<QLineEdit>(window, "returnRecord")->text() == "R011");
+        CHECK(get<QLabel>(window, "borrowCount")->text() == "11");
+        CHECK(table->item(3, 4)->text() == "2");
+        get<QPushButton>(window, "returnButton")->click();
+        CHECK(table->item(3, 4)->text() == "3");
         get<QLineEdit>(window, "ratingBook")->setText("B051");
         get<QPushButton>(window, "rateButton")->click();
         CHECK(get<QLabel>(window, "ratingCount")->text() == "801");
@@ -483,6 +715,9 @@ bool goodbooksRehearsal()
     }
     MainWindow restarted(dir.path());
     CHECK(get<QLabel>(restarted, "ratingCount")->text() == "801");
+    CHECK(get<QLabel>(restarted, "borrowCount")->text() == "11");
+    CHECK(get<QTableWidget>(restarted, "borrowTable")->item(10, 5)->text() == QStringLiteral("已归还"));
+    CHECK(get<QTableWidget>(restarted, "booksTable")->item(3, 4)->text() == "3");
     CHECK(get<QLineEdit>(restarted, "recommendUser")->text() == "U00");
     get<QSpinBox>(restarted, "topK")->setValue(5);
     get<QPushButton>(restarted, "recommendButton")->click();

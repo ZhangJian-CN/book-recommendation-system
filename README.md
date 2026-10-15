@@ -37,18 +37,20 @@
 - **清晰的模块边界**：分离交互界面、数据操作、校验逻辑与文件持久化。
 - **轻量化桌面体验**：原生 Qt Widgets 界面、本地数据存储、CMake 构建与自动化测试。
 
-> **版本说明**：仓库当前可直接使用的部分以图书列表、编号查询、信息编辑、CSV 持久化和基础测试为主。推荐相关内容在本文的「核心技术」中作为课题算法设计进行介绍，不代表全部算法功能均已集成到当前界面。
+> **版本说明**：本分支包含验收演示版本，已接入图书增删改查、哈希编号索引、书名与作者 KMP 检索、评分与协同过滤推荐、借还与库存联动，以及四份 CSV 的校验和持久化。界面提供图书、推荐、借还三个页面，包含再次点击条目取消选择及表单复位、选中行白缝修正；排练步骤见 [演示说明](docs/demo_rehearsal.md)。
 
 ## 产品能力
 
 | 能力             | 说明                                             |
 | :--------------- | :----------------------------------------------- |
 | 📖 图书信息展示   | 在桌面界面中查看图书编号、书名、作者、分类与库存 |
-| 🔎 编号快速定位   | 通过图书编号查询并选择对应记录                   |
-| ✏️ 图书信息维护   | 编辑书名、作者、分类及库存信息                   |
-| 💾 数据本地持久化 | 从 UTF-8 CSV 加载数据，并将修改写回文件          |
-| 🛡️ 数据有效性校验 | 检查编号冲突、缺失字段、非法库存及异常 CSV 内容  |
-| 🧪 基础质量验证   | 通过数据层与窗口交互的 Smoke Test 验证关键流程   |
+| 🔎 图书检索       | 使用链地址哈希索引查编号，使用 KMP 匹配书名与作者 |
+| ✏️ 图书信息维护   | 新增、编辑、删除图书；被评分或借阅记录引用的图书禁止删除 |
+| ⭐ 评分与推荐     | 保存或更新 1～5 分评分，以共同评分余弦相似度预测未评分图书，使用 Top K 小顶堆筛选并支持热门回退 |
+| 🔄 借阅与归还     | 检查库存与重复借还，联动更新库存和借阅记录，支持写入中断后的恢复 |
+| 💾 数据本地持久化 | 加载和校验四份 UTF-8 CSV，将图书、评分和借还修改写回文件 |
+| 🛡️ 数据有效性校验 | 检查编号冲突、无效引用、非法库存、评分范围及异常 CSV 内容 |
+| 🧪 自动质量验证   | 通过 8 项 CTest 检查数据层、算法、界面交互、保存重启及选中行背景 |
 
 ## 系统架构
 
@@ -56,9 +58,10 @@
 
 ```mermaid
 flowchart TB
-    A["Qt Widgets 桌面界面"] --> B["界面交互与输入校验"]
-    B --> C["BookRepository · 图书数据管理"]
-    C <--> D[("books.csv · 本地图书数据")]
+    A["Qt Widgets · 图书 / 推荐 / 借还"] --> B["LibraryStore · 业务校验与持久化"]
+    B --> C["BookRepository · 图书与哈希 / KMP 检索"]
+    A --> R["RecommendationService · 余弦相似度 / Top K / 热门回退"]
+    B <--> D[("books / users / ratings / borrow_records · 四份 CSV")]
     E["main.cpp · 程序启动"] --> A
     F["seed.qrc · 内置示例资源"] -.->|"初始化数据"| D
 ```
@@ -81,11 +84,11 @@ flowchart TB
 | 用户相似度 | 余弦相似度                         | 从共同评分记录中度量用户兴趣的相近程度           |
 | 个性化推荐 | User-Based Collaborative Filtering | 根据相似用户的评分信息形成候选图书预测分数       |
 | 排名筛选   | Top K 小顶堆                       | 使用有限容量的堆保留评分较高的候选结果           |
-| 冷启动处理 | 热门度排序                         | 在用户评分较少时提供基于整体热度的推荐思路       |
+| 冷启动处理 | 热门回退                           | 对无协同预测的候选按评分人数、平均分排序，展示分数为平均分 |
 
 **协同过滤的核心思想**：兴趣相近的用户可能偏好相似的图书。对用户间的共同评分进行比较后，可通过邻近用户的反馈估计目标用户对未评分图书的兴趣。
 
-算法框架与数据结构选型服务于课程设计分析；具体运行能力请以仓库代码和测试结果为准。
+以上算法已接入界面与自动测试。四本书小样例中，U0 的初始 Top 2 应为 B003（3.8889）、B004（2.1111）；具体复现步骤见 [演示说明](docs/demo_rehearsal.md)。
 
 ## 技术栈
 
@@ -118,7 +121,7 @@ cd book-recommendation-system
 1. 在 Qt Creator 中选择 **文件 → 打开文件或项目**。
 2. 打开仓库根目录下的 `CMakeLists.txt`。
 3. 选择已安装的 **Qt 6 Desktop Kit**。
-4. 完成配置后点击 **构建**，再点击 **运行**。
+4. 完成配置后点击 **构建**，选择 `BookRecommendation` 运行目标，再点击 **运行**。名称以 `_smoke` 结尾的目标用于测试，`search_benchmark` 用于性能测量。
 
 ### 使用 CMake 命令行
 
@@ -141,7 +144,7 @@ BookRecommendation --data-dir "/path/to/data"
 
 将 `BookRecommendation` 替换为实际生成的可执行文件路径（Windows 下通常带 `.exe`）。
 
-> 首次启动时，程序可从内置资源初始化示例数据。运行时操作的数据目录通常位于**可执行文件所在目录**，不一定是源码仓库里的 `data/`。请在修改 CSV 前确认当前使用的数据路径。
+> 未指定参数时，程序使用可执行文件旁的 `data` 子目录；指定目录不存在或完全为空时，首次启动会复制四份内置小样例。界面右下角“数据目录…”可查看实际路径。公开数据演示应先将 `demo_data/goodbooks` 的四份业务 CSV 复制到独立可写目录，再通过 `--data-dir` 加载该副本。
 
 ## 项目结构
 
@@ -150,14 +153,23 @@ book-recommendation-system/
 ├── CMakeLists.txt                 # 构建及测试配置
 ├── main.cpp                       # 程序入口与数据初始化
 ├── mainwindow.h
-├── mainwindow.cpp                 # 桌面窗口与图书交互
+├── mainwindow.cpp                 # 三页业务交互
+├── mainwindow_ui.cpp              # 页面布局、样式与共用控件
 ├── mainwindow.ui                  # Qt Designer 界面
 ├── bookrepository.h
 ├── bookrepository.cpp             # 图书模型、校验和 CSV 访问
+├── bookindex.cpp                  # 链地址哈希索引
+├── booksearch.cpp                 # KMP 检索
+├── recommendation.cpp             # 协同过滤、热门回退与 Top K
+├── librarystore.cpp               # 业务校验、评分、借还与写入恢复
+├── csvutil.cpp                    # CSV 解析与校验
 ├── bookrepository_smoke.cpp       # 数据层基础测试
 ├── mainwindow_smoke.cpp           # 界面交互基础测试
 ├── BookRecommendation_zh_CN.ts    # 中文翻译资源
 ├── seed.qrc                       # 示例数据资源
+├── ui.qrc                         # 样式与图标资源
+├── demo_data/                     # Goodbooks 公开数据子集及合成样例
+├── docs/                          # 演示步骤、测试记录与界面截图
 ├── data/
 │   ├── books.csv
 │   ├── users.csv
@@ -177,14 +189,22 @@ book-recommendation-system/
 | `ratings.csv`        | `user_id, book_id, score`                                    | 用户—图书评分关系      |
 | `borrow_records.csv` | `record_id, user_id, book_id, borrow_date, return_date, status` | 借阅记录               |
 
-仓库中包含相应的示例数据。当前界面主要使用 `books.csv`；其余数据文件用于课程设计相关数据组织与算法场景。手动维护 CSV 时，请保留原有表头和编码，并做好备份。
+四份 CSV 均已接入程序。`data` 保留四本书小样例，用于手算与边界核对；`demo_data/goodbooks` 包含 100 本图书、40 名用户、800 条评分和 10 条借阅记录，推荐用户为 U00。书名、作者及评分来自 Goodbooks-10k，显示名、分类、库存及借阅记录为模拟或占位数据，来源与许可见 [SOURCE.md](demo_data/goodbooks/SOURCE.md)。`demo_data/large` 为完全合成的备用测试数据。交互演示使用独立可写副本，保留仓库原始样例。
 
 ## 测试验证
 
-项目通过 CTest 组织基础冒烟测试，包括：
+项目通过 CTest 组织 8 项测试：
 
 - **`bookrepository_smoke`**：验证 CSV 加载、图书修改、文件保存与重新读取。
 - **`mainwindow_smoke`**：验证窗口查询、信息编辑及持久化后的行为。
+- **`hash_smoke`**：验证哈希冲突、索引更新与 KMP 检索。
+- **`core_smoke`**：验证 CSV 与引用校验、评分、推荐分数和 Top K。
+- **`borrow_smoke`**：验证借还约束、库存联动、持久化与写入恢复。
+- **`large_demo_smoke`**：验证两套较大演示数据的加载及推荐。
+- **`ui_polish_smoke`**：验证布局、数字控件、界面业务与保存重启。
+- **`selection_toggle_smoke`**：验证选中与再次点击复位、CSV 不变及选中背景连续性。
+
+`search_benchmark` 是单独运行的检索性能测量程序，不计入上述 8 项 CTest。
 
 在完成构建后执行：
 
