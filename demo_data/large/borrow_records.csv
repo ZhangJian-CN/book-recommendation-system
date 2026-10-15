@@ -1,0 +1,11 @@
+record_id,user_id,book_id,borrow_date,return_date,status
+R001,U00,B021,2026-09-20,,borrowed
+R002,U01,B022,2026-09-20,2026-09-21,returned
+R003,U02,B023,2026-09-20,,borrowed
+R004,U03,B024,2026-09-20,2026-09-21,returned
+R005,U04,B025,2026-09-20,,borrowed
+R006,U05,B026,2026-09-20,2026-09-21,returned
+R007,U06,B027,2026-09-20,,borrowed
+R008,U07,B028,2026-09-20,2026-09-21,returned
+R009,U08,B029,2026-09-20,,borrowed
+R010,U09,B030,2026-09-20,2026-09-21,returned
