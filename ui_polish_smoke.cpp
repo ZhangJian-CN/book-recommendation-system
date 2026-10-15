@@ -78,8 +78,14 @@ bool capturePages(MainWindow &window, const QString &prefix)
     const QStringList pages{QStringLiteral("books"), QStringLiteral("recommend"), QStringLiteral("borrow")};
     for (int page = 0; page < pages.size(); ++page) {
         tabs->setCurrentIndex(page);
+        const char *fields[]{"bookSearch", "recommendUser", "borrowUser"};
+        get<QLineEdit>(window, fields[page])->setFocus();
         QApplication::processEvents();
         CHECK(window.grab().save(QDir(directory).filePath(prefix + "-" + pages[page] + ".png")));
+        const char *focusFields[]{"bookTitle", "ratingScore", "returnRecord"};
+        window.findChild<QWidget *>(QString::fromLatin1(focusFields[page]))->setFocus();
+        QApplication::processEvents();
+        CHECK(window.grab().save(QDir(directory).filePath(prefix + "-" + pages[page] + "-focus.png")));
     }
     return true;
 }
@@ -322,6 +328,20 @@ bool sampleStates()
     CHECK(get<QLabel>(window, "ratingCount")->text() == "10");
     CHECK(get<QLabel>(window, "borrowCount")->text() == "2");
     CHECK(checkSpinBoxes(window));
+    CHECK(get<QLabel>(window, "bookSelectionTitle")->text() == QStringLiteral("尚未选择图书"));
+    CHECK(!get<QWidget>(window, "bookSelectionCard")->property("selected").toBool());
+    auto *tabs = get<QTabWidget>(window, "mainTabs");
+    tabs->setCurrentIndex(1);
+    QApplication::processEvents();
+    auto *rating = get<QSpinBox>(window, "ratingScore");
+    auto *rate = get<QPushButton>(window, "rateButton");
+    const int gap = rate->mapTo(&window, QPoint()).y()
+        - rating->mapTo(&window, QPoint(0, rating->height())).y();
+    CHECK(gap >= 8 && gap <= 24);
+    CHECK(get<QWidget>(window, "ratingCard")->height() < tabs->currentWidget()->height() - 40);
+    tabs->setCurrentIndex(0);
+    auto *directoryLabel = get<QLabel>(window, "datasetLabel");
+    CHECK(directoryLabel->toolTip() == QDir::toNativeSeparators(dir.path()));
     auto *save = get<QPushButton>(window, "saveButton");
     auto *remove = get<QPushButton>(window, "deleteBookButton");
     CHECK(!save->isEnabled() && !remove->isEnabled());
@@ -336,9 +356,36 @@ bool sampleStates()
     search->setText("B001");
     get<QPushButton>(window, "searchButton")->click();
     CHECK(save->isEnabled() && remove->isEnabled());
+    CHECK(get<QWidget>(window, "bookSelectionCard")->property("selected").toBool());
+    const QString savedTitle = get<QLabel>(window, "bookSelectionTitle")->text();
+    CHECK(savedTitle == QStringLiteral("算法图解"));
+    get<QLineEdit>(window, "bookTitle")->setText(QStringLiteral("尚未保存的书名"));
+    CHECK(get<QLabel>(window, "bookSelectionTitle")->text() == savedTitle);
+    get<QLineEdit>(window, "bookTitle")->setText(savedTitle);
+    search->setText("B0");
+    search->completer()->setCompletionPrefix(QStringLiteral("B0"));
+    search->completer()->complete();
+    QApplication::processEvents();
+    auto *popup = search->completer()->popup();
+    CHECK(popup->model()->rowCount() == 4 && !popup->styleSheet().isEmpty());
+    const QString screenshotDir = qEnvironmentVariable("UI_SCREENSHOT_DIR");
+    if (!screenshotDir.isEmpty()) {
+        CHECK(QDir().mkpath(screenshotDir));
+        CHECK(popup->grab().save(QDir(screenshotDir).filePath("id-completion.png")));
+    }
+    popup->hide();
+    search->setText("B001");
     get<QLineEdit>(window, "returnRecord")->setText("R001");
     CHECK(get<QLabel>(window, "borrowSelection")->text().contains(QStringLiteral("未归还")));
     CHECK(get<QTableWidget>(window, "borrowTable")->item(0, 4)->text() == QStringLiteral("—"));
+    for (const char *name : {"booksTable", "recommendTable", "borrowTable"}) {
+        auto *table = get<QTableWidget>(window, name);
+        for (int row = 0; row < table->rowCount(); ++row)
+            for (int column = 0; column < table->columnCount(); ++column) {
+                CHECK(!table->cellWidget(row, column));
+                CHECK(table->item(row, column)->text() == table->item(row, column)->toolTip());
+            }
+    }
     CHECK(capturePages(window, QStringLiteral("sample") + qEnvironmentVariable("UI_SCREENSHOT_TAG")));
     get<QTabWidget>(window, "mainTabs")->setCurrentIndex(0);
     search->setFocus();
@@ -363,6 +410,11 @@ bool sampleStates()
     get<QLineEdit>(window, "keywordSearch")->setText("no-such-title");
     get<QPushButton>(window, "keywordButton")->click();
     CHECK(table->rowCount() == 0 && !get<QLabel>(window, "booksEmpty")->isHidden());
+    if (!screenshotDir.isEmpty()) {
+        tabs->setCurrentIndex(0);
+        QApplication::processEvents();
+        CHECK(window.grab().save(QDir(screenshotDir).filePath("books-empty.png")));
+    }
     get<QPushButton>(window, "showAllButton")->click();
     CHECK(get<QLabel>(window, "booksEmpty")->isHidden());
 
@@ -413,6 +465,11 @@ bool sampleStates()
     get<QPushButton>(window, "rateButton")->click();
     CHECK(recommendations->rowCount() == 0);
     CHECK(!get<QLabel>(window, "recommendEmpty")->isHidden());
+    if (!screenshotDir.isEmpty()) {
+        tabs->setCurrentIndex(1);
+        QApplication::processEvents();
+        CHECK(window.grab().save(QDir(screenshotDir).filePath("recommend-empty.png")));
+    }
     const QString summary = get<QLabel>(window, "recommendSummary")->text();
     get<QLineEdit>(window, "recommendUser")->setText("invalid-user");
     answerDialog(window);
@@ -430,6 +487,18 @@ bool sampleStates()
     get<QPushButton>(window, "dataDirectoryButton")->click();
     CHECK(pathChecked);
 
+    QTemporaryDir longDirectory(QDir::tempPath() + "/" + QString(90, QChar(0x957F)) + "-XXXXXX");
+    CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), longDirectory));
+    MainWindow longName(longDirectory.path());
+    longName.show();
+    QApplication::processEvents();
+    auto *longLabel = get<QLabel>(longName, "datasetLabel");
+    CHECK(longLabel->fontMetrics().horizontalAdvance(longLabel->text()) > longLabel->width());
+    CHECK(longLabel->toolTip() == QDir::toNativeSeparators(longDirectory.path()));
+    CHECK(longName.width() <= longName.screen()->availableGeometry().width() - 32);
+    if (!screenshotDir.isEmpty())
+        CHECK(longName.grab().save(QDir(screenshotDir).filePath("neutral-and-long-directory.png")));
+
     QTemporaryDir emptyDir;
     CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), emptyDir));
     QFile records(emptyDir.filePath("borrow_records.csv"));
@@ -439,6 +508,12 @@ bool sampleStates()
     MainWindow emptyBorrows(emptyDir.path());
     CHECK(get<QLabel>(emptyBorrows, "borrowCount")->text() == "0");
     CHECK(!get<QLabel>(emptyBorrows, "borrowEmpty")->isHidden());
+    if (!screenshotDir.isEmpty()) {
+        emptyBorrows.show();
+        get<QTabWidget>(emptyBorrows, "mainTabs")->setCurrentIndex(2);
+        QApplication::processEvents();
+        CHECK(emptyBorrows.grab().save(QDir(screenshotDir).filePath("borrow-empty.png")));
+    }
     return true;
 }
 
@@ -475,6 +550,12 @@ bool goodbooksRehearsal()
         }
         get<QLineEdit>(window, "returnRecord")->setText("R001");
         CHECK(capturePages(window, QStringLiteral("goodbooks") + qEnvironmentVariable("UI_SCREENSHOT_TAG")));
+        get<QPushButton>(window, "borrowButton")->click();
+        CHECK(get<QLineEdit>(window, "returnRecord")->text() == "R011");
+        CHECK(get<QLabel>(window, "borrowCount")->text() == "11");
+        CHECK(table->item(3, 4)->text() == "2");
+        get<QPushButton>(window, "returnButton")->click();
+        CHECK(table->item(3, 4)->text() == "3");
         get<QLineEdit>(window, "ratingBook")->setText("B051");
         get<QPushButton>(window, "rateButton")->click();
         CHECK(get<QLabel>(window, "ratingCount")->text() == "801");
@@ -483,6 +564,9 @@ bool goodbooksRehearsal()
     }
     MainWindow restarted(dir.path());
     CHECK(get<QLabel>(restarted, "ratingCount")->text() == "801");
+    CHECK(get<QLabel>(restarted, "borrowCount")->text() == "11");
+    CHECK(get<QTableWidget>(restarted, "borrowTable")->item(10, 5)->text() == QStringLiteral("已归还"));
+    CHECK(get<QTableWidget>(restarted, "booksTable")->item(3, 4)->text() == "3");
     CHECK(get<QLineEdit>(restarted, "recommendUser")->text() == "U00");
     get<QSpinBox>(restarted, "topK")->setValue(5);
     get<QPushButton>(restarted, "recommendButton")->click();

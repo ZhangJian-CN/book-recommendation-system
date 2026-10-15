@@ -17,5 +17,19 @@
     <file alias="icons/spin-plus-disabled@2x.png">styles/icons/spin-plus-disabled@2x.png</file>
     <file alias="icons/spin-minus-disabled.png">styles/icons/spin-minus-disabled.png</file>
     <file alias="icons/spin-minus-disabled@2x.png">styles/icons/spin-minus-disabled@2x.png</file>
+    <file alias="icons/brand.png">styles/icons/brand.png</file>
+    <file alias="icons/brand@2x.png">styles/icons/brand@2x.png</file>
+    <file alias="icons/book.png">styles/icons/book.png</file>
+    <file alias="icons/book@2x.png">styles/icons/book@2x.png</file>
+    <file alias="icons/list.png">styles/icons/list.png</file>
+    <file alias="icons/list@2x.png">styles/icons/list@2x.png</file>
+    <file alias="icons/swap.png">styles/icons/swap.png</file>
+    <file alias="icons/swap@2x.png">styles/icons/swap@2x.png</file>
+    <file alias="icons/search.png">styles/icons/search.png</file>
+    <file alias="icons/search@2x.png">styles/icons/search@2x.png</file>
+    <file alias="icons/save-white.png">styles/icons/save-white.png</file>
+    <file alias="icons/save-white@2x.png">styles/icons/save-white@2x.png</file>
+    <file alias="icons/add.png">styles/icons/add.png</file>
+    <file alias="icons/add@2x.png">styles/icons/add@2x.png</file>
   </qresource>
 </RCC>

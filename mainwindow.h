@@ -29,6 +29,9 @@ public:
     explicit MainWindow(const QString &dataDir, QWidget *parent = nullptr);
     ~MainWindow() override;
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     // 三个业务页的创建入口；对应项目运行后的三个标签页。
     QWidget *buildBooksPage();
@@ -80,6 +83,7 @@ private:
     QLabel *recommendSummary_ = nullptr;
     QLabel *borrowSummary_ = nullptr;
     QLabel *bookSelection_ = nullptr;
+    QLabel *bookSelectionTitle_ = nullptr;
     QLabel *borrowSelection_ = nullptr;
     QLabel *booksEmpty_ = nullptr;
     QLabel *recommendEmpty_ = nullptr;

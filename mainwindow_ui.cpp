@@ -14,9 +14,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPainter>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
+#include <QResizeEvent>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QStyledItemDelegate>
@@ -26,10 +28,66 @@
 #include <QVBoxLayout>
 
 namespace {
+class ElidedLabel : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    QSize minimumSizeHint() const override { return {0, fontMetrics().height()}; }
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setPen(palette().color(foregroundRole()));
+        painter.drawText(contentsRect(), Qt::AlignLeft | Qt::AlignVCenter,
+                         fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
+    }
+};
+
 class RowDelegate : public QStyledItemDelegate
 {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        const auto *table = qobject_cast<QTableWidget *>(parent());
+        const bool category = table->objectName() == QStringLiteral("booksTable") && index.column() == 3;
+        const bool badge = category || (table->objectName() == QStringLiteral("recommendTable") && index.column() == 3)
+                            || (table->objectName() == QStringLiteral("borrowTable") && index.column() == 5);
+        if (!badge) {
+            QStyledItemDelegate::paint(painter, option, index);
+        } else {
+            QStyleOptionViewItem item(option);
+            initStyleOption(&item, index);
+            const QString text = item.text;
+            item.text.clear();
+            item.backgroundBrush = Qt::NoBrush;
+            table->style()->drawControl(QStyle::CE_ItemViewItem, &item, painter, table);
+            const bool amber = text == QStringLiteral("未归还") || text.startsWith(QStringLiteral("热门回退"));
+            QFont font = item.font;
+            font.setPixelSize(12);
+            const QFontMetrics metrics(font);
+            const int width = qMin(metrics.horizontalAdvance(text) + 16, option.rect.width() - 12);
+            QRect pill(option.rect.left() + 6, option.rect.center().y() - 12, width, 24);
+            if (category || table->objectName() == QStringLiteral("borrowTable"))
+                pill.moveCenter(option.rect.center());
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(category ? "#F0F3EE" : amber ? "#FBF0DC" : "#EAF2ED"));
+            painter->drawRoundedRect(pill, 5, 5);
+            painter->setFont(font);
+            painter->setPen(QColor(category ? "#647068" : amber ? "#8A5418" : "#245C4D"));
+            painter->drawText(pill.adjusted(8, 0, -8, 0), Qt::AlignCenter,
+                              metrics.elidedText(text, Qt::ElideRight, width - 16));
+            painter->restore();
+        }
+        painter->save();
+        painter->setPen(QColor("#EDF0EA"));
+        painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
+        painter->restore();
+    }
 
 protected:
     void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override
@@ -55,7 +113,7 @@ QVBoxLayout *card(QHBoxLayout *layout, bool sidebar = false)
         frame->setFixedWidth(318);
     layout->addWidget(frame, sidebar ? 0 : 1);
     auto *body = new QVBoxLayout(frame);
-    body->setContentsMargins(16, 16, 16, 16);
+    body->setContentsMargins(18, 18, 18, 18);
     body->setSpacing(12);
     return body;
 }
@@ -67,6 +125,9 @@ QLineEdit *input(const char *name, const QString &hint = {})
     widget->setObjectName(QString::fromLatin1(name));
     widget->setPlaceholderText(hint);
     widget->setMinimumHeight(36);
+    if (QString::fromLatin1(name) == QStringLiteral("bookSearch")
+        || QString::fromLatin1(name) == QStringLiteral("keywordSearch"))
+        widget->addAction(QIcon(QStringLiteral(":/ui/icons/search.png")), QLineEdit::LeadingPosition);
     return widget;
 }
 
@@ -88,6 +149,12 @@ QPushButton *button(const QString &text, const char *name, const char *role = "s
     widget->setObjectName(QString::fromLatin1(name));
     widget->setProperty("role", role);
     widget->setMinimumHeight(36);
+    const QString id = QString::fromLatin1(name);
+    if (id == QStringLiteral("saveButton") || id == QStringLiteral("rateButton"))
+        widget->setIcon(QIcon(QStringLiteral(":/ui/icons/save-white.png")));
+    else if (id == QStringLiteral("addBookButton"))
+        widget->setIcon(QIcon(QStringLiteral(":/ui/icons/add.png")));
+    widget->setIconSize(QSize(16, 16));
     return widget;
 }
 
@@ -135,10 +202,16 @@ void configureTable(QTableWidget *table, const QStringList &headers,
     table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     table->setMinimumSize(0, 0);
     table->verticalHeader()->setVisible(ranks);
-    table->verticalHeader()->setDefaultSectionSize(40);
+    table->verticalHeader()->setDefaultSectionSize(44);
     table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     table->horizontalHeader()->setMinimumHeight(36);
     table->horizontalHeader()->setStretchLastSection(false);
+    for (int column = 0; column < headers.size(); ++column) {
+        const bool centered = table->objectName() == QStringLiteral("borrowTable")
+            || column == 0 || (table->objectName() == QStringLiteral("booksTable") && column >= 3)
+            || (ranks && column == 2);
+        table->horizontalHeaderItem(column)->setTextAlignment(centered ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
+    }
     for (int column = 0; column < headers.size(); ++column) {
         table->horizontalHeader()->setSectionResizeMode(column,
             column == stretchColumn ? QHeaderView::Stretch : QHeaderView::Fixed);
@@ -153,6 +226,35 @@ void complete(QLineEdit *edit, QStringListModel *model)
     auto *completer = new QCompleter(model, edit);
     completer->setCaseSensitivity(Qt::CaseInsensitive);
     edit->setCompleter(completer);
+    completer->popup()->setObjectName(QStringLiteral("idCompletionPopup"));
+    completer->popup()->setFont(edit->font());
+    completer->popup()->setStyleSheet(edit->window()->styleSheet());
+}
+
+QLabel *elided(const QString &text, const char *role, const char *name)
+{
+    auto *widget = new ElidedLabel(text);
+    widget->setObjectName(QString::fromLatin1(name));
+    widget->setProperty("role", role);
+    widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    return widget;
+}
+
+void pageHeading(QVBoxLayout *layout, const QString &text, QLabel *summary)
+{
+    auto *row = new QHBoxLayout;
+    row->addWidget(label(text, "pageTitle"));
+    row->addWidget(summary);
+    row->addStretch();
+    layout->addLayout(row);
+}
+
+QWidget *separator()
+{
+    auto *line = new QFrame;
+    line->setProperty("role", "separator");
+    line->setFixedHeight(1);
+    return line;
 }
 }
 
@@ -176,27 +278,44 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     root->setContentsMargins(20, 16, 20, 12);
     root->setSpacing(14);
     auto *header = new QHBoxLayout;
+    auto *brand = new QLabel;
+    brand->setPixmap(QIcon(QStringLiteral(":/ui/icons/brand.png")).pixmap(QSize(36, 36), devicePixelRatioF()));
+    brand->setFixedSize(36, 36);
+    header->addWidget(brand);
+    header->setSpacing(12);
     auto *heading = new QVBoxLayout;
     heading->setSpacing(6);
     heading->addWidget(label(QStringLiteral("图书检索与个性化推荐系统"), "systemTitle"));
-    heading->addWidget(label(QStringLiteral("当前数据 · %1").arg(QDir(dataDir_).dirName()),
-                             "muted", "datasetLabel"));
+    auto *directory = elided(QStringLiteral("当前数据 · %1").arg(QDir(dataDir_).dirName()), "muted", "datasetLabel");
+    directory->setToolTip(QDir::toNativeSeparators(QDir(dataDir_).absolutePath()));
+    heading->addWidget(directory);
     header->addLayout(heading, 1);
     const QStringList captions{QStringLiteral("图书"), QStringLiteral("用户"),
                                QStringLiteral("评分"), QStringLiteral("借阅记录")};
     const char *names[]{"bookCount", "userCount", "ratingCount", "borrowCount"};
+    auto *metrics = new QFrame;
+    metrics->setObjectName(QStringLiteral("metrics"));
+    auto *metricRow = new QHBoxLayout(metrics);
+    metricRow->setContentsMargins(10, 8, 10, 8);
+    metricRow->setSpacing(12);
     for (int i = 0; i < 4; ++i) {
-        auto *metric = new QVBoxLayout;
-        metric->setContentsMargins(14, 0, 14, 0);
-        metric->setSpacing(2);
+        if (i) {
+            auto *line = new QFrame;
+            line->setProperty("role", "metricSeparator");
+            line->setFixedSize(1, 22);
+            metricRow->addWidget(line);
+        }
+        auto *metric = new QHBoxLayout;
+        metric->setSpacing(6);
         counts_[i] = label(QStringLiteral("0"), "metricValue", names[i]);
         counts_[i]->setAlignment(Qt::AlignCenter);
         auto *caption = label(captions[i], "muted");
         caption->setAlignment(Qt::AlignCenter);
         metric->addWidget(counts_[i]);
         metric->addWidget(caption);
-        header->addLayout(metric);
+        metricRow->addLayout(metric);
     }
+    header->addWidget(metrics);
     root->addLayout(header);
     // QTabWidget 组织三页；build...Page 返回 QWidget，每页只负责自己的交互入口。
     auto *tabs = new QTabWidget;
@@ -204,12 +323,24 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     tabs->addTab(buildBooksPage(), QStringLiteral("图书管理与检索"));
     tabs->addTab(buildRecommendPage(), QStringLiteral("评分与推荐"));
     tabs->addTab(buildBorrowPage(), QStringLiteral("借阅与归还"));
+    tabs->setIconSize(QSize(16, 16));
+    tabs->setTabIcon(0, QIcon(QStringLiteral(":/ui/icons/book.png")));
+    tabs->setTabIcon(1, QIcon(QStringLiteral(":/ui/icons/list.png")));
+    tabs->setTabIcon(2, QIcon(QStringLiteral(":/ui/icons/swap.png")));
     root->addWidget(tabs, 1);
 
     auto *directoryButton = button(QStringLiteral("数据目录…"), "dataDirectoryButton");
     statusBar()->setSizeGripEnabled(false);
     statusBar()->addPermanentWidget(directoryButton);
     connect(directoryButton, &QPushButton::clicked, this, &MainWindow::showDataDirectory);
+    connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString &message) {
+        auto *bar = statusBar();
+        bar->setProperty("error", message.contains(QStringLiteral("失败"))
+                                     || message.contains(QStringLiteral("未找到"))
+                                     || message.contains(QStringLiteral("不存在")));
+        bar->style()->unpolish(bar);
+        bar->style()->polish(bar);
+    });
 
     // 所有页面建立后统一加载四份 CSV；失败时显示原因并禁用业务页。
     // 调用链：MainWindow 构造 -> LibraryStore::load -> BookRepository::load / Csv::read。
@@ -257,12 +388,12 @@ QWidget *MainWindow::buildBooksPage()
     // 图书页：左侧列表与检索，右侧表单；表格禁止直接编辑，修改通过业务层校验保存。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
-    columns->setContentsMargins(0, 0, 0, 0);
-    columns->setSpacing(16);
+    columns->setContentsMargins(0, 16, 0, 0);
+    columns->setSpacing(20);
     auto *results = card(columns);
-    results->addWidget(label(QStringLiteral("图书列表"), "pageTitle"));
-    bookSummary_ = label({}, "muted", "bookSummary");
-    results->addWidget(bookSummary_);
+    bookSummary_ = label({}, "count", "bookSummary");
+    pageHeading(results, QStringLiteral("图书列表"), bookSummary_);
+    results->addWidget(label(QStringLiteral("点击记录查看和编辑"), "muted"));
     auto *searchRow = new QHBoxLayout;
     search_ = input("bookSearch", QStringLiteral("图书编号，如 B001"));
     search_->setMaximumWidth(240);
@@ -279,7 +410,7 @@ QWidget *MainWindow::buildBooksPage()
     keywordRow->addWidget(keywordButton);
     keywordRow->addWidget(showAllButton);
     results->addLayout(keywordRow);
-    booksEmpty_ = label(QStringLiteral("暂无匹配图书，请调整关键词或显示全部。"),
+    booksEmpty_ = label(QStringLiteral("<img src=\":/ui/icons/search.png\" width=\"16\" height=\"16\">　暂无匹配图书，请调整关键词或显示全部。"),
                         "empty", "booksEmpty");
     booksEmpty_->setWordWrap(true);
     results->addWidget(booksEmpty_);
@@ -292,15 +423,27 @@ QWidget *MainWindow::buildBooksPage()
 
     auto *actions = card(columns, true);
     actions->addWidget(label(QStringLiteral("图书信息"), "sectionTitle"));
-    bookSelection_ = label(QStringLiteral("尚未选择图书"), "selection", "bookSelection");
+    auto *selection = new QFrame;
+    selection->setObjectName(QStringLiteral("bookSelectionCard"));
+    selection->setProperty("selected", false);
+    auto *selectionLayout = new QHBoxLayout(selection);
+    selectionLayout->setContentsMargins(10, 10, 10, 10);
+    auto *bookIcon = new QLabel;
+    bookIcon->setPixmap(QIcon(QStringLiteral(":/ui/icons/book.png")).pixmap(QSize(26, 26), devicePixelRatioF()));
+    selectionLayout->addWidget(bookIcon);
+    auto *selectionText = new QVBoxLayout;
+    selectionText->setSpacing(3);
+    bookSelectionTitle_ = elided(QStringLiteral("尚未选择图书"), "selectedTitle", "bookSelectionTitle");
+    selectionText->addWidget(bookSelectionTitle_);
+    bookSelection_ = label(QStringLiteral("按编号查找或点击列表"), "muted", "bookSelection");
+    bookSelection_->setTextFormat(Qt::PlainText);
     bookSelection_->setWordWrap(true);
-    actions->addWidget(bookSelection_);
+    selectionText->addWidget(bookSelection_);
+    selectionLayout->addLayout(selectionText, 1);
+    actions->addWidget(selection);
     auto *form = scrollingForm(actions);
-    newId_ = input("newBookId", QStringLiteral("新增时填写"));
-    field(form, QStringLiteral("新书编号"), newId_);
-    auto *hint = label(QStringLiteral("新增时填写，现有编号不修改。"), "muted");
-    hint->setWordWrap(true);
-    form->addWidget(hint);
+    newId_ = input("newBookId", QStringLiteral("如 B005"));
+    field(form, QStringLiteral("新书编号（仅新增时填写）"), newId_);
     title_ = input("bookTitle");
     author_ = input("bookAuthor");
     category_ = input("bookCategory");
@@ -317,6 +460,8 @@ QWidget *MainWindow::buildBooksPage()
     buttons->addWidget(saveButton_, 1);
     buttons->addWidget(addButton, 1);
     actions->addLayout(buttons);
+    actions->addSpacing(4);
+    actions->addWidget(separator());
     deleteButton_ = button(QStringLiteral("删除当前图书"), "deleteBookButton", "danger");
     deleteButton_->setEnabled(false);
     actions->addWidget(deleteButton_);
@@ -351,15 +496,15 @@ QWidget *MainWindow::buildRecommendPage()
     // 推荐页：左侧用户、Top K 与结果，右侧录入 1～5 分；计算和保存均由独立模块处理。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
-    columns->setContentsMargins(0, 0, 0, 0);
-    columns->setSpacing(16);
+    columns->setContentsMargins(0, 16, 0, 0);
+    columns->setSpacing(20);
     auto *results = card(columns);
-    results->addWidget(label(QStringLiteral("推荐结果"), "pageTitle"));
-    recommendSummary_ = label(QStringLiteral("选择用户并生成推荐"), "muted", "recommendSummary");
-    results->addWidget(recommendSummary_);
+    recommendSummary_ = label({}, "count", "recommendSummary");
+    pageHeading(results, QStringLiteral("推荐结果"), recommendSummary_);
+    results->addWidget(label(QStringLiteral("按预测分降序展示 · 保留四位小数"), "muted"));
     auto *toolbar = new QHBoxLayout;
     recommendUser_ = input("recommendUser", QStringLiteral("用户编号"));
-    recommendUser_->setMaximumWidth(180);
+    recommendUser_->setMaximumWidth(150);
     topK_ = number("topK", 1, 1000, 2);
     topK_->setFixedWidth(136);
     auto *recommendButton = button(QStringLiteral("重新推荐"), "recommendButton", "primary");
@@ -370,7 +515,7 @@ QWidget *MainWindow::buildRecommendPage()
     toolbar->addWidget(recommendButton);
     toolbar->addStretch();
     results->addLayout(toolbar);
-    recommendEmpty_ = label(QStringLiteral("暂无可推荐图书\n请确认是否已评完所有图书，或候选图书库存为零。"),
+    recommendEmpty_ = label(QStringLiteral("<img src=\":/ui/icons/list.png\" width=\"16\" height=\"16\">　暂无可推荐图书<br>请确认是否已评完所有图书，或候选图书库存为零。"),
                             "empty", "recommendEmpty");
     recommendEmpty_->setWordWrap(true);
     recommendEmpty_->hide();
@@ -381,9 +526,15 @@ QWidget *MainWindow::buildRecommendPage()
                                     QStringLiteral("分数"), QStringLiteral("来源")},
                    {80, 0, 90, 175}, 1, true);
     results->addWidget(recommendTable_, 1);
-    auto *actions = card(columns, true);
+    auto *sidebar = new QVBoxLayout;
+    sidebar->setSpacing(16);
+    columns->addLayout(sidebar);
+    auto *cardRow = new QHBoxLayout;
+    auto *actions = card(cardRow, true);
+    actions->parentWidget()->setObjectName(QStringLiteral("ratingCard"));
+    sidebar->addLayout(cardRow);
     actions->addWidget(label(QStringLiteral("录入或更新评分"), "sectionTitle"));
-    auto *hint = label(QStringLiteral("为图书评 1～5 分；重复提交会更新已有评分。"), "muted");
+    auto *hint = label(QStringLiteral("为指定用户记录 1～5 分的评分"), "muted");
     hint->setWordWrap(true);
     actions->addWidget(hint);
     auto *form = scrollingForm(actions);
@@ -393,12 +544,16 @@ QWidget *MainWindow::buildRecommendPage()
     field(form, QStringLiteral("评分用户"), ratingUser_);
     field(form, QStringLiteral("图书编号"), ratingBook_);
     field(form, QStringLiteral("评分"), ratingScore_);
-    form->addStretch();
     auto *rateButton = button(QStringLiteral("保存评分"), "rateButton", "primary");
+    actions->addSpacing(4);
     actions->addWidget(rateButton);
-    auto *refreshHint = label(QStringLiteral("已评分图书不会再次进入该用户的推荐候选。\n评分用户与推荐用户相同时，保存后自动刷新推荐。"), "muted");
+    auto *updateHint = label(QStringLiteral("重复提交会更新这位用户已有的评分。"), "muted");
+    updateHint->setWordWrap(true);
+    actions->addWidget(updateHint);
+    auto *refreshHint = label(QStringLiteral("推荐说明\n已评分图书会退出该用户的推荐候选。\n评分用户与推荐用户相同时，保存后自动刷新推荐。"), "muted");
     refreshHint->setWordWrap(true);
-    actions->addWidget(refreshHint);
+    sidebar->addWidget(refreshHint);
+    sidebar->addStretch(1);
     // 保存评分 -> rateBook；重新推荐 -> showRecommendations -> RecommendationService。
     // rateBook 负责保存评分并按条件刷新；showRecommendations 重建矩阵后重新计算结果。
     connect(rateButton, &QPushButton::clicked, this, &MainWindow::rateBook);
@@ -412,13 +567,13 @@ QWidget *MainWindow::buildBorrowPage()
     // 借还页连接业务层已有接口；日期由操作函数取本机当天日期，表格展示保存后的记录。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
-    columns->setContentsMargins(0, 0, 0, 0);
-    columns->setSpacing(16);
+    columns->setContentsMargins(0, 16, 0, 0);
+    columns->setSpacing(20);
     auto *results = card(columns);
-    results->addWidget(label(QStringLiteral("借阅记录"), "pageTitle"));
-    borrowSummary_ = label({}, "muted", "borrowSummary");
-    results->addWidget(borrowSummary_);
-    borrowEmpty_ = label(QStringLiteral("暂无借阅记录，可在右侧借出图书。"), "empty", "borrowEmpty");
+    borrowSummary_ = label({}, "count", "borrowSummary");
+    pageHeading(results, QStringLiteral("借阅记录"), borrowSummary_);
+    results->addWidget(label(QStringLiteral("点击记录填写归还编号"), "muted"));
+    borrowEmpty_ = label(QStringLiteral("<img src=\":/ui/icons/swap.png\" width=\"16\" height=\"16\">　暂无借阅记录，可在右侧借出图书。"), "empty", "borrowEmpty");
     borrowEmpty_->setWordWrap(true);
     results->addWidget(borrowEmpty_);
     borrowTable_ = new QTableWidget;
@@ -429,7 +584,7 @@ QWidget *MainWindow::buildBorrowPage()
                    {90, 65, 70, 115, 115, 0}, 5);
     results->addWidget(borrowTable_, 1);
     auto *actions = card(columns, true);
-    actions->addWidget(label(QStringLiteral("借出与归还"), "sectionTitle"));
+    actions->addWidget(label(QStringLiteral("<img src=\":/ui/icons/swap.png\" width=\"16\" height=\"16\">　借出图书"), "sectionTitle"));
     auto *form = scrollingForm(actions);
     borrowUser_ = input("borrowUser", QStringLiteral("用户编号"));
     borrowBook_ = input("borrowBook", QStringLiteral("图书编号"));
@@ -437,8 +592,12 @@ QWidget *MainWindow::buildBorrowPage()
     field(form, QStringLiteral("图书编号"), borrowBook_);
     auto *borrowButton = button(QStringLiteral("借出图书"), "borrowButton", "primary");
     form->addWidget(borrowButton);
-    form->addSpacing(6);
-    form->addWidget(label(QStringLiteral("归还图书"), "sectionTitle"));
+    auto *dateRule = label(QStringLiteral("借出和归还使用今天的日期。"), "muted");
+    form->addWidget(dateRule);
+    form->addSpacing(4);
+    form->addWidget(separator());
+    form->addSpacing(4);
+    form->addWidget(label(QStringLiteral("<img src=\":/ui/icons/swap.png\" width=\"16\" height=\"16\">　归还图书"), "sectionTitle"));
     returnRecord_ = input("returnRecord", QStringLiteral("输入编号，或点击左侧记录"));
     field(form, QStringLiteral("借阅编号"), returnRecord_);
     borrowSelection_ = label(QStringLiteral("尚未选择借阅记录"), "selection", "borrowSelection");
@@ -447,7 +606,7 @@ QWidget *MainWindow::buildBorrowPage()
     auto *returnButton = button(QStringLiteral("归还图书"), "returnButton");
     form->addStretch();
     actions->addWidget(returnButton);
-    auto *rule = label(QStringLiteral("借出与归还使用本机当天日期，允许当天归还。\n同一用户同一本书只能有一条未归还记录。"), "muted");
+    auto *rule = label(QStringLiteral("允许当天归还；同一本书归还后可再次借阅。"), "muted");
     rule->setWordWrap(true);
     actions->addWidget(rule);
     connect(borrowButton, &QPushButton::clicked, this, &MainWindow::borrowBook);
@@ -457,6 +616,14 @@ QWidget *MainWindow::buildBorrowPage()
     });
     connect(returnRecord_, &QLineEdit::textChanged, this, &MainWindow::updateBorrowSelection);
     return page;
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    for (auto *table : {table_, recommendTable_, borrowTable_})
+        if (table)
+            table->verticalHeader()->setDefaultSectionSize(height() < 720 ? 40 : 44);
 }
 
 void MainWindow::showDataDirectory()

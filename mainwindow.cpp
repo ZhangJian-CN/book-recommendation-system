@@ -6,6 +6,7 @@
 
 #include <QColor>
 #include <QDate>
+#include <QStyle>
 #include <QStringListModel>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,12 +34,18 @@ void MainWindow::showBookRows(const QVector<int> &rows)
         for (int column = 0; column < values.size(); ++column) {
             auto *item = new QTableWidgetItem(values[column]);
             item->setToolTip(values[column]);
-            if (column == 0 || column == 4)
+            if (column == 0 || column == 3 || column == 4)
                 item->setTextAlignment(Qt::AlignCenter);
+            item->setForeground(QColor(column == 0 || column == 2 ? "#647068" : "#22352C"));
+            if (column == 1 || column == 4) {
+                auto font = table_->font();
+                font.setWeight(column == 1 ? QFont::Medium : QFont::DemiBold);
+                item->setFont(font);
+            }
             table_->setItem(displayRow, column, item);
         }
     }
-    bookSummary_->setText(QStringLiteral("显示 %1 / %2 本图书 · 点击记录编辑")
+    bookSummary_->setText(QStringLiteral("显示 %1 / %2 本")
                               .arg(rows.size()).arg(library_.books().all().size()));
     booksEmpty_->setVisible(rows.isEmpty());
     updateBookSelection();
@@ -72,21 +79,32 @@ void MainWindow::updateBookSelection()
 {
     // 是否允许保存/删除取决于 selectedId_ 是否仍存在，不取决于筛选表格是否有选中行。
     const bool selected = library_.books().findById(selectedId_) != nullptr;
+    auto *selectionCard = bookSelection_->parentWidget();
+    selectionCard->setProperty("selected", selected);
+    selectionCard->style()->unpolish(selectionCard);
+    selectionCard->style()->polish(selectionCard);
     saveButton_->setEnabled(selected);
     deleteButton_->setEnabled(selected);
     if (!selected) {
-        bookSelection_->setText(QStringLiteral("尚未选择图书"));
+        bookSelectionTitle_->setText(QStringLiteral("尚未选择图书"));
+        bookSelectionTitle_->setToolTip({});
+        bookSelection_->setText(QStringLiteral("按编号查找或点击列表"));
+        bookSelection_->setToolTip({});
         return;
     }
+    const Book *book = library_.books().findById(selectedId_);
+    bookSelectionTitle_->setText(book->title);
+    bookSelectionTitle_->setToolTip(book->title);
+    const QString metadata = QStringLiteral("%1 · %2").arg(book->id, book->author);
+    bookSelection_->setToolTip(metadata);
     for (int row = 0; row < table_->rowCount(); ++row) {
         if (table_->item(row, 0)->text() == selectedId_) {
             table_->selectRow(row);
-            bookSelection_->setText(QStringLiteral("当前图书 · %1").arg(selectedId_));
+            bookSelection_->setText(metadata);
             return;
         }
     }
-    bookSelection_->setText(QStringLiteral("当前图书 · %1\n不在筛选结果中，仍可编辑此图书。")
-                                .arg(selectedId_));
+    bookSelection_->setText(metadata + QStringLiteral("\n不在筛选结果中，仍可编辑此图书。"));
 }
 
 void MainWindow::selectBook(const QString &id)
@@ -239,11 +257,20 @@ void MainWindow::showRecommendations()
                 item->setTextAlignment(Qt::AlignCenter);
             if (column == 3)
                 item->setForeground(QColor(result.source == RecommendationSource::Collaborative
-                                               ? "#0F766E" : "#92400E"));
+                                               ? "#245C4D" : "#8A5418"));
+            else if (column == 0)
+                item->setForeground(QColor("#647068"));
+            else if (column == 2) {
+                QFont font(QStringLiteral("Consolas"));
+                font.setPixelSize(16);
+                font.setWeight(QFont::DemiBold);
+                item->setFont(font);
+                item->setForeground(QColor("#245C4D"));
+            }
             recommendTable_->setItem(row, column, item);
         }
     }
-    recommendSummary_->setText(QStringLiteral("用户 %1 · 共 %2 条推荐 · 分数保留四位小数")
+    recommendSummary_->setText(QStringLiteral("用户 %1 · %2 条")
                                    .arg(userId).arg(results.size()));
     recommendEmpty_->setVisible(results.isEmpty());
     statusBar()->showMessage(QStringLiteral("用户 %1 的 Top %2 推荐已更新")
@@ -267,13 +294,18 @@ void MainWindow::refreshBorrowTable()
             item->setTextAlignment(Qt::AlignCenter);
             if (column == 5) {
                 const bool borrowed = record.status == QStringLiteral("borrowed");
-                item->setForeground(QColor(borrowed ? "#92400E" : "#0F766E"));
-                item->setBackground(QColor(borrowed ? "#FFF4DE" : "#E6F4F1"));
+                item->setForeground(QColor(borrowed ? "#8A5418" : "#245C4D"));
+                item->setBackground(QColor(borrowed ? "#FBF0DC" : "#EAF2ED"));
+            } else {
+                QFont font(QStringLiteral("Consolas"));
+                font.setPixelSize(13);
+                item->setFont(font);
+                item->setForeground(QColor("#647068"));
             }
             borrowTable_->setItem(row, column, item);
         }
     }
-    borrowSummary_->setText(QStringLiteral("共 %1 条记录 · 点击记录填写归还编号")
+    borrowSummary_->setText(QStringLiteral("%1 条")
                                 .arg(library_.borrowRecords().size()));
     borrowEmpty_->setVisible(library_.borrowRecords().isEmpty());
     updateBorrowSelection();
