@@ -11,9 +11,11 @@
 #include <QFile>
 #include <QFrame>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QScreen>
@@ -35,9 +37,16 @@ public:
     ResultsTable(int minimumRows, int maximumRows)
         : minimumRows_(minimumRows), maximumRows_(maximumRows)
     {
-        connect(model(), &QAbstractItemModel::rowsInserted, this, [this] { updateGeometry(); });
-        connect(model(), &QAbstractItemModel::rowsRemoved, this, [this] { updateGeometry(); });
+        connect(model(), &QAbstractItemModel::rowsInserted, this, [this] { clearClickState(); updateGeometry(); });
+        connect(model(), &QAbstractItemModel::rowsRemoved, this, [this] { clearClickState(); updateGeometry(); });
+        connect(model(), &QAbstractItemModel::modelReset, this, &ResultsTable::clearClickState);
+        connect(model(), &QAbstractItemModel::dataChanged, this, &ResultsTable::clearClickState);
         connect(horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this] { updateGeometry(); });
+    }
+    ~ResultsTable() override
+    {
+        // QTableWidget 的析构会清空模型；此时派生类的鼠标状态已结束生命周期。
+        disconnect(model(), nullptr, this, nullptr);
     }
 
     QSize sizeHint() const override
@@ -51,7 +60,35 @@ public:
     }
     QSize minimumSizeHint() const override { return {0, 0}; }
 
+    bool isLeftRowClick(int row) const
+    {
+        const auto *id = item(row, 0);
+        return id && !pressedId_.isEmpty() && id->text() == pressedId_;
+    }
+    bool wasSelectedBeforePress() const { return selectedBeforePress_; }
+
 protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        clearClickState();
+        const QModelIndex hit = indexAt(event->position().toPoint());
+        if (event->button() == Qt::LeftButton && hit.isValid()) {
+            // 必须先取状态再交给 Qt；cellClicked 发出时，第一次点击也已被 Qt 选中。
+            pressedId_ = item(hit.row(), 0)->text();
+            selectedBeforePress_ = selectionModel()->isRowSelected(hit.row(), hit.parent());
+        }
+        QTableWidget::mousePressEvent(event);
+    }
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        QTableWidget::mouseReleaseEvent(event);
+        clearClickState();
+    }
+    void mouseDoubleClickEvent(QMouseEvent *event) override
+    {
+        // 快速第二次按下仍按一次普通点击处理，释放时只走一次 cellClicked。
+        mousePressEvent(event);
+    }
     void focusInEvent(QFocusEvent *event) override
     {
         QTableWidget::focusInEvent(event);
@@ -72,6 +109,14 @@ protected:
     }
 
 private:
+    void clearClickState()
+    {
+        pressedId_.clear();
+        selectedBeforePress_ = false;
+    }
+
+    QString pressedId_;
+    bool selectedBeforePress_ = false;
     int minimumRows_;
     int maximumRows_;
 };
@@ -458,7 +503,7 @@ QWidget *MainWindow::buildBooksPage()
     auto *results = card(columns);
     bookSummary_ = label({}, "count", "bookSummary");
     pageHeading(results, QStringLiteral("图书列表"), bookSummary_);
-    results->addWidget(label(QStringLiteral("点击记录查看和编辑"), "muted"));
+    results->addWidget(label(QStringLiteral("点击记录选择，再次点击取消并清空编辑区"), "muted"));
     auto *searchRow = new QHBoxLayout;
     search_ = input("bookSearch", QStringLiteral("图书编号，如 B001"));
     search_->setMaximumWidth(240);
@@ -479,7 +524,8 @@ QWidget *MainWindow::buildBooksPage()
                         "empty", "booksEmpty");
     booksEmpty_->setWordWrap(true);
     results->addWidget(booksEmpty_);
-    table_ = new ResultsTable(5, 9);
+    auto *bookTable = new ResultsTable(5, 9);
+    table_ = bookTable;
     table_->setObjectName(QStringLiteral("booksTable"));
     configureTable(table_, {QStringLiteral("编号"), QStringLiteral("书名"),
                             QStringLiteral("作者"), QStringLiteral("分类"), QStringLiteral("库存")},
@@ -547,8 +593,13 @@ QWidget *MainWindow::buildBooksPage()
         refreshTable();
         showOperationMessage(QStringLiteral("已显示全部图书"));
     });
-    connect(table_, &QTableWidget::cellClicked, this, [this](int row, int) {
-        selectBook(table_->item(row, 0)->text());
+    connect(table_, &QTableWidget::cellClicked, this, [this, bookTable](int row, int) {
+        if (!bookTable->isLeftRowClick(row))
+            return;
+        if (bookTable->wasSelectedBeforePress())
+            resetBookSelection();
+        else
+            selectBook(table_->item(row, 0)->text());
     });
     connect(addButton, &QPushButton::clicked, this, &MainWindow::addBook);
     connect(saveButton_, &QPushButton::clicked, this, &MainWindow::saveSelected);
@@ -585,12 +636,20 @@ QWidget *MainWindow::buildRecommendPage()
     recommendEmpty_->setWordWrap(true);
     recommendEmpty_->hide();
     results->addWidget(recommendEmpty_);
-    recommendTable_ = new ResultsTable(3, 8);
+    auto *recommendTable = new ResultsTable(3, 8);
+    recommendTable_ = recommendTable;
     recommendTable_->setObjectName(QStringLiteral("recommendTable"));
     configureTable(recommendTable_, {QStringLiteral("编号"), QStringLiteral("书名"),
                                     QStringLiteral("分数"), QStringLiteral("来源")},
                    {80, 0, 90, 175}, 1, true);
     results->addWidget(recommendTable_, 1);
+    connect(recommendTable_, &QTableWidget::cellClicked, this, [this, recommendTable](int row, int) {
+        if (!recommendTable->isLeftRowClick(row))
+            return;
+        if (recommendTable->wasSelectedBeforePress())
+            recommendTable_->selectionModel()->clear();
+        showPageSummary();
+    });
     auto *sidebar = new QVBoxLayout;
     sidebar->setSpacing(16);
     columns->addLayout(sidebar);
@@ -654,7 +713,8 @@ QWidget *MainWindow::buildBorrowPage()
     borrowEmpty_ = label(QStringLiteral("<img src=\":/ui/icons/swap.png\" width=\"16\" height=\"16\">　暂无借阅记录，可在右侧借出图书。"), "empty", "borrowEmpty");
     borrowEmpty_->setWordWrap(true);
     results->addWidget(borrowEmpty_);
-    borrowTable_ = new ResultsTable(4, 9);
+    auto *borrowTable = new ResultsTable(4, 9);
+    borrowTable_ = borrowTable;
     borrowTable_->setObjectName(QStringLiteral("borrowTable"));
     configureTable(borrowTable_, {QStringLiteral("记录编号"), QStringLiteral("用户"),
                                  QStringLiteral("图书"), QStringLiteral("借出日期"),
@@ -692,8 +752,13 @@ QWidget *MainWindow::buildBorrowPage()
     form->addWidget(rule);
     connect(borrowButton, &QPushButton::clicked, this, &MainWindow::borrowBook);
     connect(returnButton, &QPushButton::clicked, this, &MainWindow::returnBook);
-    connect(borrowTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
-        returnRecord_->setText(borrowTable_->item(row, 0)->text());
+    connect(borrowTable_, &QTableWidget::cellClicked, this, [this, borrowTable](int row, int) {
+        if (!borrowTable->isLeftRowClick(row))
+            return;
+        if (borrowTable->wasSelectedBeforePress())
+            resetBorrowSelection();
+        else
+            returnRecord_->setText(borrowTable_->item(row, 0)->text());
     });
     connect(returnRecord_, &QLineEdit::textChanged, this, &MainWindow::updateBorrowSelection);
     connect(returnRecord_, &QLineEdit::textChanged, this, [this] {

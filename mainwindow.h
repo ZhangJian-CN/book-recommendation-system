@@ -40,6 +40,8 @@ private:
     void refreshSummary();
     void updateBookSelection();
     void updateBorrowSelection();
+    void resetBookSelection();
+    void resetBorrowSelection();
     void showDataDirectory();
     void showPageSummary();
     void showOperationMessage(const QString &message, int timeout = 5000);

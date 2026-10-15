@@ -65,6 +65,16 @@ configure_file(ui_screen_1280x720.json ui_screen_1280x720.json COPYONLY)
 set_tests_properties(ui_polish_smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen:configfile=ui_screen_1280x720.json;UI_SCREENSHOT_DIR=;SPIN_SCREENSHOT_DIR=")
 
+add_executable(selection_toggle_smoke selection_toggle_smoke.cpp mainwindow.cpp mainwindow_ui.cpp
+    mainwindow.h mainwindow.ui ui.qrc)
+target_link_libraries(selection_toggle_smoke PRIVATE Qt::Widgets bookcore)
+target_compile_definitions(selection_toggle_smoke PRIVATE
+    SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    SAMPLE_GOODBOOKS_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/demo_data/goodbooks")
+add_test(NAME selection_toggle_smoke COMMAND selection_toggle_smoke)
+set_tests_properties(selection_toggle_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen:configfile=ui_screen_1280x720.json;TOGGLE_SCREENSHOT_DIR=")
+
 add_executable(hash_smoke hash_smoke.cpp)
 target_link_libraries(hash_smoke PRIVATE bookcore)
 target_compile_definitions(hash_smoke PRIVATE SAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")

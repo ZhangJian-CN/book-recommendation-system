@@ -9,6 +9,7 @@
 #include <QStyle>
 #include <QStringListModel>
 #include <QLabel>
+#include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
@@ -168,6 +169,25 @@ void MainWindow::selectBook(const QString &id)
     table_->clearSelection();
     updateBookSelection();
     showOperationMessage(QStringLiteral("已选中图书 %1").arg(id));
+}
+
+void MainWindow::resetBookSelection()
+{
+    // 同时解除业务编辑对象、选中行和当前索引；仅复位界面，不修改真实图书或 CSV。
+    selectedId_.clear();
+    table_->selectionModel()->clear();
+    for (auto *edit : {search_, newId_, title_, author_, category_})
+        edit->clear();
+    stock_->setValue(0);
+    updateBookSelection();
+    showPageSummary();
+}
+
+void MainWindow::resetBorrowSelection()
+{
+    returnRecord_->clear();
+    borrowTable_->selectionModel()->clear();
+    showPageSummary();
 }
 
 void MainWindow::saveSelected()
