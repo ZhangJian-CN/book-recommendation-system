@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QResizeEvent>
 #include <QSpinBox>
 #include <QStatusBar>
@@ -28,6 +29,62 @@
 #include <QVBoxLayout>
 
 namespace {
+class ResultsTable : public QTableWidget
+{
+public:
+    ResultsTable(int minimumRows, int maximumRows)
+        : minimumRows_(minimumRows), maximumRows_(maximumRows)
+    {
+        connect(model(), &QAbstractItemModel::rowsInserted, this, [this] { updateGeometry(); });
+        connect(model(), &QAbstractItemModel::rowsRemoved, this, [this] { updateGeometry(); });
+        connect(horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this] { updateGeometry(); });
+    }
+
+    QSize sizeHint() const override
+    {
+        // 空结果已有独立提示，仅留一行视口承载键盘焦点线；不向模型补空行。
+        const int capacity = rowCount() == 0 ? 1 : qBound(minimumRows_, rowCount(), maximumRows_);
+        const int scroll = horizontalScrollBar()->maximum() > 0 ? horizontalScrollBar()->sizeHint().height() : 0;
+        const int header = qMax(horizontalHeader()->minimumHeight(), horizontalHeader()->sizeHint().height());
+        return {QTableWidget::sizeHint().width(), header
+            + capacity * verticalHeader()->defaultSectionSize() + 2 * frameWidth() + scroll};
+    }
+    QSize minimumSizeHint() const override { return {0, 0}; }
+
+protected:
+    void focusInEvent(QFocusEvent *event) override
+    {
+        QTableWidget::focusInEvent(event);
+        viewport()->update();
+    }
+    void focusOutEvent(QFocusEvent *event) override
+    {
+        QTableWidget::focusOutEvent(event);
+        viewport()->update();
+    }
+    void paintEvent(QPaintEvent *event) override
+    {
+        QTableWidget::paintEvent(event);
+        if (hasFocus() && rowCount() == 0) {
+            QPainter painter(viewport());
+            painter.fillRect(QRect(0, 0, qMin(48, viewport()->width()), 2), QColor("#245C4D"));
+        }
+    }
+
+private:
+    int minimumRows_;
+    int maximumRows_;
+};
+
+class FormScrollArea : public QScrollArea
+{
+public:
+    QSize sizeHint() const override
+    {
+        return widget() ? widget()->sizeHint() + QSize(0, 2 * frameWidth()) : QScrollArea::sizeHint();
+    }
+};
+
 class ElidedLabel : public QLabel
 {
 public:
@@ -68,8 +125,8 @@ public:
             QFont font = item.font;
             font.setPixelSize(12);
             const QFontMetrics metrics(font);
-            const int width = qMin(metrics.horizontalAdvance(text) + 16, option.rect.width() - 12);
-            QRect pill(option.rect.left() + 6, option.rect.center().y() - 12, width, 24);
+            const int width = qMin(metrics.horizontalAdvance(text) + 16, option.rect.width() - 24);
+            QRect pill(option.rect.left() + 12, option.rect.center().y() - 12, width, 24);
             if (category || table->objectName() == QStringLiteral("borrowTable"))
                 pill.moveCenter(option.rect.center());
             painter->save();
@@ -86,6 +143,9 @@ public:
         painter->save();
         painter->setPen(QColor("#EDF0EA"));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
+        if (index.column() == 0 && (option.state & QStyle::State_Selected))
+            painter->fillRect(QRect(option.rect.left(), option.rect.top(), 2, option.rect.height()),
+                              QColor(table->hasFocus() ? "#245C4D" : "#91B19E"));
         painter->restore();
     }
 
@@ -112,6 +172,10 @@ QVBoxLayout *card(QHBoxLayout *layout, bool sidebar = false)
     if (sidebar)
         frame->setFixedWidth(318);
     layout->addWidget(frame, sidebar ? 0 : 1);
+    if (!sidebar) {
+        frame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+        layout->setAlignment(frame, Qt::AlignTop);
+    }
     auto *body = new QVBoxLayout(frame);
     body->setContentsMargins(18, 18, 18, 18);
     body->setSpacing(12);
@@ -149,12 +213,6 @@ QPushButton *button(const QString &text, const char *name, const char *role = "s
     widget->setObjectName(QString::fromLatin1(name));
     widget->setProperty("role", role);
     widget->setMinimumHeight(36);
-    const QString id = QString::fromLatin1(name);
-    if (id == QStringLiteral("saveButton") || id == QStringLiteral("rateButton"))
-        widget->setIcon(QIcon(QStringLiteral(":/ui/icons/save-white.png")));
-    else if (id == QStringLiteral("addBookButton"))
-        widget->setIcon(QIcon(QStringLiteral(":/ui/icons/add.png")));
-    widget->setIconSize(QSize(16, 16));
     return widget;
 }
 
@@ -171,7 +229,7 @@ void field(QVBoxLayout *layout, const QString &caption, QWidget *widget)
 
 QVBoxLayout *scrollingForm(QVBoxLayout *layout)
 {
-    auto *scroll = new QScrollArea;
+    auto *scroll = new FormScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setMinimumSize(0, 0);
@@ -195,12 +253,14 @@ void configureTable(QTableWidget *table, const QStringList &headers,
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setTabKeyNavigation(false);
     table->setAlternatingRowColors(true);
     table->setShowGrid(false);
     table->setWordWrap(false);
     table->setTextElideMode(Qt::ElideRight);
     table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     table->setMinimumSize(0, 0);
+    table->setFrameShape(QFrame::NoFrame);
     table->verticalHeader()->setVisible(ranks);
     table->verticalHeader()->setDefaultSectionSize(44);
     table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
@@ -333,7 +393,12 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     statusBar()->setSizeGripEnabled(false);
     statusBar()->addPermanentWidget(directoryButton);
     connect(directoryButton, &QPushButton::clicked, this, &MainWindow::showDataDirectory);
+    connect(tabs, &QTabWidget::currentChanged, this, [this] { showPageSummary(); });
     connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString &message) {
+        if (message.isEmpty()) {
+            showPageSummary();
+            return;
+        }
         auto *bar = statusBar();
         bar->setProperty("error", message.contains(QStringLiteral("失败"))
                                      || message.contains(QStringLiteral("未找到"))
@@ -379,7 +444,7 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     refreshBorrowTable();
     if (!library_.users().isEmpty())
         showRecommendations();
-    statusBar()->showMessage(QStringLiteral("数据加载完成：%1 本图书、%2 条评分")
+    showOperationMessage(QStringLiteral("数据加载完成：%1 本图书、%2 条评分")
                                  .arg(library_.books().all().size()).arg(library_.ratings().size()));
 }
 
@@ -414,7 +479,7 @@ QWidget *MainWindow::buildBooksPage()
                         "empty", "booksEmpty");
     booksEmpty_->setWordWrap(true);
     results->addWidget(booksEmpty_);
-    table_ = new QTableWidget;
+    table_ = new ResultsTable(5, 9);
     table_->setObjectName(QStringLiteral("booksTable"));
     configureTable(table_, {QStringLiteral("编号"), QStringLiteral("书名"),
                             QStringLiteral("作者"), QStringLiteral("分类"), QStringLiteral("库存")},
@@ -475,12 +540,12 @@ QWidget *MainWindow::buildBooksPage()
         // 关键词检索调用 KMP，返回图书数组下标；showBookRows 负责转换为表格显示行。
         // 本操作只筛选显示内容，不改图书实体，也不写入 CSV。
         showBookRows(BookSearch::keywordRows(library_.books().all(), keyword_->text()));
-        statusBar()->showMessage(QStringLiteral("关键词检索得到 %1 本图书").arg(table_->rowCount()));
+        showOperationMessage(QStringLiteral("关键词检索得到 %1 本图书").arg(table_->rowCount()));
     });
     connect(keyword_, &QLineEdit::returnPressed, keywordButton, &QPushButton::click);
     connect(showAllButton, &QPushButton::clicked, this, [this] {
         refreshTable();
-        statusBar()->showMessage(QStringLiteral("已显示全部图书"));
+        showOperationMessage(QStringLiteral("已显示全部图书"));
     });
     connect(table_, &QTableWidget::cellClicked, this, [this](int row, int) {
         selectBook(table_->item(row, 0)->text());
@@ -520,7 +585,7 @@ QWidget *MainWindow::buildRecommendPage()
     recommendEmpty_->setWordWrap(true);
     recommendEmpty_->hide();
     results->addWidget(recommendEmpty_);
-    recommendTable_ = new QTableWidget;
+    recommendTable_ = new ResultsTable(3, 8);
     recommendTable_->setObjectName(QStringLiteral("recommendTable"));
     configureTable(recommendTable_, {QStringLiteral("编号"), QStringLiteral("书名"),
                                     QStringLiteral("分数"), QStringLiteral("来源")},
@@ -550,9 +615,22 @@ QWidget *MainWindow::buildRecommendPage()
     auto *updateHint = label(QStringLiteral("重复提交会更新这位用户已有的评分。"), "muted");
     updateHint->setWordWrap(true);
     actions->addWidget(updateHint);
-    auto *refreshHint = label(QStringLiteral("推荐说明\n已评分图书会退出该用户的推荐候选。\n评分用户与推荐用户相同时，保存后自动刷新推荐。"), "muted");
+    auto *guidance = new QWidget;
+    guidance->setObjectName(QStringLiteral("recommendGuidance"));
+    auto *guidanceLayout = new QVBoxLayout(guidance);
+    guidanceLayout->setContentsMargins(18, 0, 18, 0);
+    guidanceLayout->setSpacing(6);
+    guidanceLayout->addWidget(label(QStringLiteral("推荐说明"), "guidanceTitle"));
+    auto *candidateHint = label(QStringLiteral("<p style='line-height:120%; margin-top:0; margin-bottom:0'>已评分图书会退出该用户的推荐候选。</p>"), "guidance");
+    candidateHint->setTextFormat(Qt::RichText);
+    candidateHint->setWordWrap(true);
+    guidanceLayout->addWidget(candidateHint);
+    guidanceLayout->addSpacing(6);
+    auto *refreshHint = label(QStringLiteral("<p style='line-height:120%; margin-top:0; margin-bottom:0'>评分用户与推荐用户相同时，<br>保存后自动刷新推荐结果。</p>"), "guidance");
+    refreshHint->setTextFormat(Qt::RichText);
     refreshHint->setWordWrap(true);
-    sidebar->addWidget(refreshHint);
+    guidanceLayout->addWidget(refreshHint);
+    sidebar->addWidget(guidance);
     sidebar->addStretch(1);
     // 保存评分 -> rateBook；重新推荐 -> showRecommendations -> RecommendationService。
     // rateBook 负责保存评分并按条件刷新；showRecommendations 重建矩阵后重新计算结果。
@@ -576,7 +654,7 @@ QWidget *MainWindow::buildBorrowPage()
     borrowEmpty_ = label(QStringLiteral("<img src=\":/ui/icons/swap.png\" width=\"16\" height=\"16\">　暂无借阅记录，可在右侧借出图书。"), "empty", "borrowEmpty");
     borrowEmpty_->setWordWrap(true);
     results->addWidget(borrowEmpty_);
-    borrowTable_ = new QTableWidget;
+    borrowTable_ = new ResultsTable(4, 9);
     borrowTable_->setObjectName(QStringLiteral("borrowTable"));
     configureTable(borrowTable_, {QStringLiteral("记录编号"), QStringLiteral("用户"),
                                  QStringLiteral("图书"), QStringLiteral("借出日期"),
@@ -584,6 +662,9 @@ QWidget *MainWindow::buildBorrowPage()
                    {90, 65, 70, 115, 115, 0}, 5);
     results->addWidget(borrowTable_, 1);
     auto *actions = card(columns, true);
+    actions->parentWidget()->setObjectName(QStringLiteral("borrowCard"));
+    actions->parentWidget()->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Maximum);
+    columns->setAlignment(actions->parentWidget(), Qt::AlignTop);
     actions->addWidget(label(QStringLiteral("<img src=\":/ui/icons/swap.png\" width=\"16\" height=\"16\">　借出图书"), "sectionTitle"));
     auto *form = scrollingForm(actions);
     borrowUser_ = input("borrowUser", QStringLiteral("用户编号"));
@@ -604,17 +685,21 @@ QWidget *MainWindow::buildBorrowPage()
     borrowSelection_->setWordWrap(true);
     form->addWidget(borrowSelection_);
     auto *returnButton = button(QStringLiteral("归还图书"), "returnButton");
-    form->addStretch();
-    actions->addWidget(returnButton);
+    form->addSpacing(2);
+    form->addWidget(returnButton);
     auto *rule = label(QStringLiteral("允许当天归还；同一本书归还后可再次借阅。"), "muted");
     rule->setWordWrap(true);
-    actions->addWidget(rule);
+    form->addWidget(rule);
     connect(borrowButton, &QPushButton::clicked, this, &MainWindow::borrowBook);
     connect(returnButton, &QPushButton::clicked, this, &MainWindow::returnBook);
     connect(borrowTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
         returnRecord_->setText(borrowTable_->item(row, 0)->text());
     });
     connect(returnRecord_, &QLineEdit::textChanged, this, &MainWindow::updateBorrowSelection);
+    connect(returnRecord_, &QLineEdit::textChanged, this, [this] {
+        if (findChild<QTabWidget *>(QStringLiteral("mainTabs"))->currentIndex() == 2)
+            showPageSummary();
+    });
     return page;
 }
 
@@ -622,8 +707,10 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     for (auto *table : {table_, recommendTable_, borrowTable_})
-        if (table)
+        if (table) {
             table->verticalHeader()->setDefaultSectionSize(height() < 720 ? 40 : 44);
+            table->updateGeometry();
+        }
 }
 
 void MainWindow::showDataDirectory()

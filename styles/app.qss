@@ -10,7 +10,9 @@ QLabel[role="systemTitle"] { font-size: 21px; font-weight: 600; }
 QLabel[role="pageTitle"] { font-size: 18px; font-weight: 600; }
 QLabel[role="sectionTitle"] { font-size: 15px; font-weight: 600; }
 QLabel[role="muted"] { color: #647068; font-size: 12px; }
-QLabel[role="metricValue"] { font-family: "Consolas"; font-size: 20px; font-weight: 600; }
+QLabel[role="metricValue"] { font-family: "Segoe UI"; font-size: 20px; font-weight: 600; }
+QLabel[role="guidanceTitle"] { color: #4E6557; font-size: 12px; font-weight: 600; }
+QLabel[role="guidance"] { color: #647068; font-size: 12px; }
 QLabel[role="selection"] {
     color: #245C4D;
     background: #EAF2ED;
@@ -93,14 +95,14 @@ QPushButton:disabled, QPushButton[role="primary"]:disabled, QPushButton[role="da
 QTableWidget {
     background: #FFFFFF;
     alternate-background-color: #FDFEFC;
-    border: 1px solid transparent;
+    border: none;
     border-radius: 0;
     selection-background-color: #EAF2ED;
     selection-color: #22352C;
 }
-QTableWidget::item { padding: 5px; }
+QTableWidget::item { padding: 5px 9px; }
 QTableWidget::item:selected { background: #EAF2ED; color: #22352C; }
-QTableWidget:focus { border: 1px solid #245C4D; }
+QTableWidget:focus { border: none; border-radius: 0; }
 QHeaderView::section {
     background: #F6F8F3;
     color: #647068;
@@ -108,7 +110,7 @@ QHeaderView::section {
     font-weight: 500;
     border: none;
     border-bottom: 1px solid #E0E6DE;
-    padding: 7px;
+    padding: 7px 12px;
 }
 QTableCornerButton::section { background: #F5F6F2; border: none; }
 QScrollArea { background: transparent; border: none; }

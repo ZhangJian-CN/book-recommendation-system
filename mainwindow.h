@@ -41,6 +41,8 @@ private:
     void updateBookSelection();
     void updateBorrowSelection();
     void showDataDirectory();
+    void showPageSummary();
+    void showOperationMessage(const QString &message, int timeout = 5000);
     void refreshTable();
     void showBookRows(const QVector<int> &rows);
     // 编号查找与点击表格均进入此函数，再把实体字段填入编辑表单。
@@ -60,6 +62,8 @@ private:
     QString dataDir_;
     // 编辑对象按图书编号保存，不使用筛选后可能变化的表格显示行号。
     QString selectedId_;
+    QString lastRecommendUser_;
+    int lastRecommendCount_ = 0;
     // 控件指针在建页时赋值，响应函数通过它们读取输入或写入显示结果。
     QTableWidget *table_ = nullptr;
     QLineEdit *search_ = nullptr;

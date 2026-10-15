@@ -15,10 +15,42 @@
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QTableWidget>
+#include <QTabWidget>
 
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::showOperationMessage(const QString &message, int timeout)
+{
+    statusBar()->showMessage(message, timeout);
+}
+
+void MainWindow::showPageSummary()
+{
+    auto *tabs = findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    if (!tabs || !tabs->isEnabled())
+        return;
+    QString summary;
+    if (tabs->currentIndex() == 0) {
+        summary = library_.books().findById(selectedId_)
+            ? QStringLiteral("已选中图书 %1").arg(selectedId_)
+            : QStringLiteral("图书列表 · 显示 %1 / %2 本").arg(table_->rowCount()).arg(library_.books().all().size());
+    } else if (tabs->currentIndex() == 1) {
+        summary = lastRecommendUser_.isEmpty() ? QStringLiteral("尚未生成推荐")
+            : QStringLiteral("用户 %1 · %2 条推荐").arg(lastRecommendUser_).arg(lastRecommendCount_);
+    } else {
+        summary = QStringLiteral("借阅记录 · %1 条").arg(library_.borrowRecords().size());
+        for (const BorrowRecord &record : library_.borrowRecords()) {
+            if (record.id == returnRecord_->text().trimmed()) {
+                summary = QStringLiteral("借阅记录 %1 · %2").arg(record.id,
+                    record.status == QStringLiteral("borrowed") ? QStringLiteral("未归还") : QStringLiteral("已归还"));
+                break;
+            }
+        }
+    }
+    statusBar()->showMessage(summary);
 }
 
 void MainWindow::showBookRows(const QVector<int> &rows)
@@ -36,10 +68,12 @@ void MainWindow::showBookRows(const QVector<int> &rows)
             item->setToolTip(values[column]);
             if (column == 0 || column == 3 || column == 4)
                 item->setTextAlignment(Qt::AlignCenter);
-            item->setForeground(QColor(column == 0 || column == 2 ? "#647068" : "#22352C"));
-            if (column == 1 || column == 4) {
+            item->setForeground(QColor(column == 0 ? "#647068" : column == 2 ? "#5D6B62" : "#22352C"));
+            if (column == 0 || column == 1 || column == 4) {
                 auto font = table_->font();
-                font.setWeight(column == 1 ? QFont::Medium : QFont::DemiBold);
+                if (column != 1)
+                    font.setFamily(QStringLiteral("Segoe UI"));
+                font.setWeight(column == 1 ? QFont::Medium : column == 4 ? QFont::DemiBold : QFont::Normal);
                 item->setFont(font);
             }
             table_->setItem(displayRow, column, item);
@@ -121,7 +155,7 @@ void MainWindow::selectBook(const QString &id)
         category_->clear();
         stock_->setValue(0);
         updateBookSelection();
-        statusBar()->showMessage(QStringLiteral("未找到图书编号：%1").arg(id), 5000);
+        showOperationMessage(QStringLiteral("未找到图书编号：%1").arg(id), 5000);
         return;
     }
     selectedId_ = id;
@@ -133,7 +167,7 @@ void MainWindow::selectBook(const QString &id)
     stock_->setValue(book->stock);
     table_->clearSelection();
     updateBookSelection();
-    statusBar()->showMessage(QStringLiteral("已选中图书 %1").arg(id));
+    showOperationMessage(QStringLiteral("已选中图书 %1").arg(id));
 }
 
 void MainWindow::saveSelected()
@@ -150,13 +184,13 @@ void MainWindow::saveSelected()
     // &error 将错误文本交回界面；失败时保留表单输入，用户可修正后再次保存。
     QString error;
     if (!library_.updateBook(book, &error)) {
-        statusBar()->showMessage(QStringLiteral("保存失败"));
+        showOperationMessage(QStringLiteral("保存失败"));
         QMessageBox::warning(this, QStringLiteral("保存失败"), error);
         return;
     }
     refreshTable();
     selectBook(selectedId_);
-    statusBar()->showMessage(QStringLiteral("已保存图书 %1").arg(selectedId_));
+    showOperationMessage(QStringLiteral("已保存图书 %1").arg(selectedId_));
 }
 
 void MainWindow::addBook()
@@ -167,13 +201,13 @@ void MainWindow::addBook()
                     author_->text().trimmed(), category_->text().trimmed(), stock_->value()};
     QString error;
     if (!library_.addBook(book, &error)) {
-        statusBar()->showMessage(QStringLiteral("新增失败"));
+        showOperationMessage(QStringLiteral("新增失败"));
         QMessageBox::warning(this, QStringLiteral("新增失败"), error);
         return;
     }
     refreshTable();
     selectBook(book.id);
-    statusBar()->showMessage(QStringLiteral("已新增并保存图书 %1").arg(book.id));
+    showOperationMessage(QStringLiteral("已新增并保存图书 %1").arg(book.id));
 }
 
 void MainWindow::deleteSelected()
@@ -192,7 +226,7 @@ void MainWindow::deleteSelected()
     const QString id = selectedId_;
     QString error;
     if (!library_.deleteBook(id, &error)) {
-        statusBar()->showMessage(QStringLiteral("删除失败"));
+        showOperationMessage(QStringLiteral("删除失败"));
         QMessageBox::warning(this, QStringLiteral("删除失败"), error);
         return;
     }
@@ -203,7 +237,7 @@ void MainWindow::deleteSelected()
     category_->clear();
     stock_->setValue(0);
     refreshTable();
-    statusBar()->showMessage(QStringLiteral("已删除并保存图书 %1").arg(id));
+    showOperationMessage(QStringLiteral("已删除并保存图书 %1").arg(id));
 }
 
 void MainWindow::rateBook()
@@ -215,7 +249,7 @@ void MainWindow::rateBook()
     const QString bookId = ratingBook_->text().trimmed();
     QString error;
     if (!library_.rate(userId, bookId, ratingScore_->value(), &error)) {
-        statusBar()->showMessage(QStringLiteral("评分失败"));
+        showOperationMessage(QStringLiteral("评分失败"));
         QMessageBox::warning(this, QStringLiteral("评分失败"), error);
         return;
     }
@@ -223,7 +257,7 @@ void MainWindow::rateBook()
         showRecommendations();
     // 当前自动刷新条件是用户编号相同；其他用户的评分保存后可点击“重新推荐”重算。
     refreshSummary();
-    statusBar()->showMessage(QStringLiteral("已保存 %1 对 %2 的评分").arg(userId, bookId));
+    showOperationMessage(QStringLiteral("已保存 %1 对 %2 的评分").arg(userId, bookId));
 }
 
 void MainWindow::showRecommendations()
@@ -232,7 +266,7 @@ void MainWindow::showRecommendations()
     // 调用链：重新推荐按钮 -> showRecommendations -> 构造 RecommendationService -> recommend。
     const QString userId = recommendUser_->text().trimmed();
     if (!library_.hasUser(userId)) {
-        statusBar()->showMessage(QStringLiteral("推荐失败：用户编号不存在"));
+        showOperationMessage(QStringLiteral("推荐失败：用户编号不存在"));
         QMessageBox::warning(this, QStringLiteral("推荐失败"),
                              QStringLiteral("用户编号 %1 不存在").arg(userId));
         return;
@@ -258,10 +292,13 @@ void MainWindow::showRecommendations()
             if (column == 3)
                 item->setForeground(QColor(result.source == RecommendationSource::Collaborative
                                                ? "#245C4D" : "#8A5418"));
-            else if (column == 0)
+            else if (column == 0) {
+                QFont font(QStringLiteral("Segoe UI"));
+                font.setPixelSize(13);
+                item->setFont(font);
                 item->setForeground(QColor("#647068"));
-            else if (column == 2) {
-                QFont font(QStringLiteral("Consolas"));
+            } else if (column == 2) {
+                QFont font(QStringLiteral("Segoe UI"));
                 font.setPixelSize(16);
                 font.setWeight(QFont::DemiBold);
                 item->setFont(font);
@@ -270,10 +307,12 @@ void MainWindow::showRecommendations()
             recommendTable_->setItem(row, column, item);
         }
     }
+    lastRecommendUser_ = userId;
+    lastRecommendCount_ = results.size();
     recommendSummary_->setText(QStringLiteral("用户 %1 · %2 条")
                                    .arg(userId).arg(results.size()));
     recommendEmpty_->setVisible(results.isEmpty());
-    statusBar()->showMessage(QStringLiteral("用户 %1 的 Top %2 推荐已更新")
+    showOperationMessage(QStringLiteral("用户 %1 的 Top %2 推荐已更新")
                                  .arg(userId).arg(results.size()));
 }
 
@@ -297,7 +336,7 @@ void MainWindow::refreshBorrowTable()
                 item->setForeground(QColor(borrowed ? "#8A5418" : "#245C4D"));
                 item->setBackground(QColor(borrowed ? "#FBF0DC" : "#EAF2ED"));
             } else {
-                QFont font(QStringLiteral("Consolas"));
+                QFont font(QStringLiteral("Segoe UI"));
                 font.setPixelSize(13);
                 item->setFont(font);
                 item->setForeground(QColor("#647068"));
@@ -339,7 +378,7 @@ void MainWindow::borrowBook()
     const QString date = QDate::currentDate().toString(Qt::ISODate);
     if (!library_.borrowBook(borrowUser_->text().trimmed(), borrowBook_->text().trimmed(),
                              date, &recordId, &error)) {
-        statusBar()->showMessage(QStringLiteral("借出失败"));
+        showOperationMessage(QStringLiteral("借出失败"));
         QMessageBox::warning(this, QStringLiteral("借出失败"), error);
         return;
     }
@@ -347,7 +386,7 @@ void MainWindow::borrowBook()
     refreshTable();
     refreshBorrowTable();
     showRecommendations();
-    statusBar()->showMessage(QStringLiteral("借出成功：%1，记录编号 %2").arg(date, recordId));
+    showOperationMessage(QStringLiteral("借出成功：%1，记录编号 %2").arg(date, recordId));
 }
 
 void MainWindow::returnBook()
@@ -357,12 +396,12 @@ void MainWindow::returnBook()
     const QString date = QDate::currentDate().toString(Qt::ISODate);
     const QString recordId = returnRecord_->text().trimmed();
     if (!library_.returnBook(recordId, date, &error)) {
-        statusBar()->showMessage(QStringLiteral("归还失败"));
+        showOperationMessage(QStringLiteral("归还失败"));
         QMessageBox::warning(this, QStringLiteral("归还失败"), error);
         return;
     }
     refreshTable();
     refreshBorrowTable();
     showRecommendations();
-    statusBar()->showMessage(QStringLiteral("归还成功：%1，记录编号 %2").arg(date, recordId));
+    showOperationMessage(QStringLiteral("归还成功：%1，记录编号 %2").arg(date, recordId));
 }
