@@ -102,7 +102,7 @@ flowchart TB
 使用**用户—图书评分矩阵**组织评分数据，并依据两名用户的**共同评分图书**计算余弦相似度：
 
 $$
-\operatorname{sim}(u,v)=
+\mathrm{sim}(u,v)=
 \frac{\sum_{i\in I_{uv}}r_{u,i}r_{v,i}}
 {\sqrt{\sum_{i\in I_{uv}}r_{u,i}^{2}}\sqrt{\sum_{i\in I_{uv}}r_{v,i}^{2}}}
 $$
