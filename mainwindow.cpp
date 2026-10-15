@@ -1,3 +1,5 @@
+// 界面操作流程为“读取输入 -> 调用业务层 -> 失败提示/成功刷新”。处理各种操作。
+// 评分和推荐的主要入口是 rateBook、showRecommendations；这里不重复实现核心算法。
 #include "mainwindow.h"
 #include "recommendation.h"
 #include "ui_mainwindow.h"
@@ -20,6 +22,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::showBookRows(const QVector<int> &rows)
 {
+    // rows 是原图书数组下标，displayRow 是当前筛选表格的行号，两者可能不同。
+    // 例：只检索到 B004 时 rows=[3]，它显示在表格第 0 行，仍读取实体数组第 3 项。
     table_->clearSelection();
     table_->setRowCount(rows.size());
     for (int displayRow = 0; displayRow < rows.size(); ++displayRow) {
@@ -42,6 +46,7 @@ void MainWindow::showBookRows(const QVector<int> &rows)
 
 void MainWindow::refreshTable()
 {
+    // 生成所有实体的数组下标，因此此函数显示完整列表，保存图书后也会恢复完整列表。
     QVector<int> rows;
     for (int i = 0; i < library_.books().all().size(); ++i)
         rows.append(i);
@@ -51,6 +56,7 @@ void MainWindow::refreshTable()
 
 void MainWindow::refreshSummary()
 {
+    // 顶部四个数量从内存记录数产生；图书增删后同步补全列表，避免建议已删除编号。
     const qsizetype values[]{library_.books().all().size(), library_.users().size(),
                              library_.ratings().size(), library_.borrowRecords().size()};
     for (int i = 0; i < 4; ++i)
@@ -64,6 +70,7 @@ void MainWindow::refreshSummary()
 
 void MainWindow::updateBookSelection()
 {
+    // 是否允许保存/删除取决于 selectedId_ 是否仍存在，不取决于筛选表格是否有选中行。
     const bool selected = library_.books().findById(selectedId_) != nullptr;
     saveButton_->setEnabled(selected);
     deleteButton_->setEnabled(selected);
@@ -84,8 +91,11 @@ void MainWindow::updateBookSelection()
 
 void MainWindow::selectBook(const QString &id)
 {
+    // 按编号经哈希索引找到图书，再填入编辑表单；selectedId_ 跟踪真正的编辑对象。
+    // 调用链：按编号按钮 -> selectBook -> BookRepository::findById -> BookIndex::rowForId。
     const Book *book = library_.books().findById(id);
     if (!book) {
+        // 未找到就清空编辑对象和旧字段，避免用户误以为仍可修改刚才那本书。
         selectedId_.clear();
         table_->clearSelection();
         title_->clear();
@@ -110,6 +120,8 @@ void MainWindow::selectBook(const QString &id)
 
 void MainWindow::saveSelected()
 {
+    // 使用已选编号与表单字段调用 updateBook；只有业务层保存成功后才刷新表格。
+    // 调用链：保存按钮 -> saveSelected -> LibraryStore::updateBook -> BookRepository::save -> Csv::write。
     if (selectedId_.isEmpty()) {
         QMessageBox::information(this, QStringLiteral("尚未选择图书"),
                                  QStringLiteral("请先按编号查找或点击表格中的图书。"));
@@ -117,6 +129,7 @@ void MainWindow::saveSelected()
     }
     const Book book{selectedId_, title_->text().trimmed(), author_->text().trimmed(),
                     category_->text().trimmed(), stock_->value()};
+    // &error 将错误文本交回界面；失败时保留表单输入，用户可修正后再次保存。
     QString error;
     if (!library_.updateBook(book, &error)) {
         statusBar()->showMessage(QStringLiteral("保存失败"));
@@ -130,6 +143,8 @@ void MainWindow::saveSelected()
 
 void MainWindow::addBook()
 {
+    // 使用新增编号构造 Book，业务层检查重复编号和字段，并写回 books.csv。
+    // 新增用 newId_，修改用 selectedId_；二者分开，避免输入新编号时误改已有书。
     const Book book{newId_->text().trimmed(), title_->text().trimmed(),
                     author_->text().trimmed(), category_->text().trimmed(), stock_->value()};
     QString error;
@@ -145,6 +160,8 @@ void MainWindow::addBook()
 
 void MainWindow::deleteSelected()
 {
+    // 用户确认后交给业务层检查引用限制，删除成功再清空选择并刷新界面。
+    // 用户点“是”只表示确认操作，业务层仍可因评分或借阅历史引用拒绝删除。
     if (selectedId_.isEmpty()) {
         QMessageBox::information(this, QStringLiteral("尚未选择图书"),
                                  QStringLiteral("请先选择要删除的图书。"));
@@ -173,6 +190,9 @@ void MainWindow::deleteSelected()
 
 void MainWindow::rateBook()
 {
+    // 评分先写回 ratings.csv；评分用户与当前推荐用户相同时自动重算推荐。
+    // 调用链：保存评分按钮 -> rateBook -> LibraryStore::rate -> saveRatings -> Csv::write。
+    // 评分记录是持久化数据；评分矩阵是下一次推荐时根据记录建立的计算结构。
     const QString userId = ratingUser_->text().trimmed();
     const QString bookId = ratingBook_->text().trimmed();
     QString error;
@@ -183,12 +203,15 @@ void MainWindow::rateBook()
     }
     if (recommendUser_->text().trimmed() == userId)
         showRecommendations();
+    // 当前自动刷新条件是用户编号相同；其他用户的评分保存后可点击“重新推荐”重算。
     refreshSummary();
     statusBar()->showMessage(QStringLiteral("已保存 %1 对 %2 的评分").arg(userId, bookId));
 }
 
 void MainWindow::showRecommendations()
 {
+    // 新建服务会使用最新评分重建矩阵，随后调用协同过滤和 Top K；界面只展示结果。
+    // 调用链：重新推荐按钮 -> showRecommendations -> 构造 RecommendationService -> recommend。
     const QString userId = recommendUser_->text().trimmed();
     if (!library_.hasUser(userId)) {
         statusBar()->showMessage(QStringLiteral("推荐失败：用户编号不存在"));
@@ -197,7 +220,10 @@ void MainWindow::showRecommendations()
         return;
     }
     RecommendationService service(library_.books(), library_.users(), library_.ratings());
+    // topK_ 是用户希望展示的条数；结果已在业务算法中排好序，界面不再修改排名。
     const auto results = service.recommend(userId, topK_->value());
+    // 分数保留四位小数，并注明来源，便于现场核对手算预测与热门回退。
+    // 原始小样例 U0 应显示 B003=3.8889、B004=2.1111；给 B003 评分后它退出候选。
     recommendTable_->setRowCount(results.size());
     for (int row = 0; row < results.size(); ++row) {
         const Recommendation &result = results[row];
@@ -226,6 +252,7 @@ void MainWindow::showRecommendations()
 
 void MainWindow::refreshBorrowTable()
 {
+    // 空归还日期仅在界面显示为“—”，原 CSV 中仍是空字段，显示格式不改变保存格式。
     borrowTable_->setRowCount(library_.borrowRecords().size());
     for (int row = 0; row < library_.borrowRecords().size(); ++row) {
         const BorrowRecord &record = library_.borrowRecords()[row];
@@ -274,6 +301,7 @@ void MainWindow::updateBorrowSelection()
 
 void MainWindow::borrowBook()
 {
+    // 业务层成功借出后更新图书库存、借阅表及推荐，库存为零的书随重算移出候选。
     QString recordId;
     QString error;
     const QString date = QDate::currentDate().toString(Qt::ISODate);
@@ -292,6 +320,7 @@ void MainWindow::borrowBook()
 
 void MainWindow::returnBook()
 {
+    // 归还成功后刷新库存和记录，并重新计算当前推荐用户的结果。
     QString error;
     const QString date = QDate::currentDate().toString(Qt::ISODate);
     const QString recordId = returnRecord_->text().trimmed();

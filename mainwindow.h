@@ -4,6 +4,8 @@
 #include <QMainWindow>
 #include "librarystore.h"
 
+//声明窗口类
+
 class QLineEdit;
 class QSpinBox;
 class QTableWidget;
@@ -17,6 +19,8 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
+// 主窗口：mainwindow_ui.cpp 负责布局和信号连接，mainwindow.cpp 负责响应操作与显示结果。
+// LibraryStore 处理业务和保存，RecommendationService 处理推荐计算。
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -26,6 +30,7 @@ public:
     ~MainWindow() override;
 
 private:
+    // 三个业务页的创建入口；对应项目运行后的三个标签页。
     QWidget *buildBooksPage();
     QWidget *buildRecommendPage();
     QWidget *buildBorrowPage();
@@ -35,10 +40,12 @@ private:
     void showDataDirectory();
     void refreshTable();
     void showBookRows(const QVector<int> &rows);
+    // 编号查找与点击表格均进入此函数，再把实体字段填入编辑表单。
     void selectBook(const QString &id);
     void saveSelected();
     void addBook();
     void deleteSelected();
+    // 主链路：rateBook -> LibraryStore::rate；showRecommendations -> RecommendationService。
     void rateBook();
     void showRecommendations();
     void refreshBorrowTable();
@@ -48,7 +55,9 @@ private:
     Ui::MainWindow *ui;
     LibraryStore library_;
     QString dataDir_;
+    // 编辑对象按图书编号保存，不使用筛选后可能变化的表格显示行号。
     QString selectedId_;
+    // 控件指针在建页时赋值，响应函数通过它们读取输入或写入显示结果。
     QTableWidget *table_ = nullptr;
     QLineEdit *search_ = nullptr;
     QLineEdit *keyword_ = nullptr;

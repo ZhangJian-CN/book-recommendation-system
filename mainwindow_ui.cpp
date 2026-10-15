@@ -1,3 +1,5 @@
+// Qt 主界面。mainwindow.ui 提供基础窗口外壳，三个业务页由本文件的 C++ 创建。创建主界面。
+// 本文件 connect 信号到操作函数；具体业务响应及表格刷新在 mainwindow.cpp。
 #include "mainwindow.h"
 #include "booksearch.h"
 #include "ui_mainwindow.h"
@@ -60,6 +62,7 @@ QVBoxLayout *card(QHBoxLayout *layout, bool sidebar = false)
 
 QLineEdit *input(const char *name, const QString &hint = {})
 {
+    // name 设置为 objectName，便于测试按名称找到控件；hint 是空输入时的提示文字。
     auto *widget = new QLineEdit;
     widget->setObjectName(QString::fromLatin1(name));
     widget->setPlaceholderText(hint);
@@ -69,6 +72,7 @@ QLineEdit *input(const char *name, const QString &hint = {})
 
 QSpinBox *number(const char *name, int minimum, int maximum, int value)
 {
+    // 数字框限定范围并设置初值；业务层仍再次校验，不能只依赖界面输入限制。
     auto *widget = new QSpinBox;
     widget->setObjectName(QString::fromLatin1(name));
     widget->setRange(minimum, maximum);
@@ -117,6 +121,7 @@ QVBoxLayout *scrollingForm(QVBoxLayout *layout)
 void configureTable(QTableWidget *table, const QStringList &headers,
                     const QList<int> &widths, int stretchColumn, bool ranks = false)
 {
+    // 所有业务表格统一为整行单选、禁止直接编辑；表单保存才能进入业务校验和持久化。
     table->setColumnCount(headers.size());
     table->setItemDelegate(new RowDelegate(table));
     table->setHorizontalHeaderLabels(headers);
@@ -144,6 +149,7 @@ void configureTable(QTableWidget *table, const QStringList &headers,
 
 void complete(QLineEdit *edit, QStringListModel *model)
 {
+    // 输入补全由实际编号列表提供建议，只帮助选编号，不替代业务层存在性检查。
     auto *completer = new QCompleter(model, edit);
     completer->setCaseSensitivity(Qt::CaseInsensitive);
     edit->setCompleter(completer);
@@ -153,9 +159,12 @@ void complete(QLineEdit *edit, QStringListModel *model)
 MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), dataDir_(dataDir)
 {
+    // 初始化窗口外壳和样式，再创建图书、评分推荐、借还三个标签页。
+    // ui->setupUi 建立 .ui 中的基础窗口；下面的布局和控件构成实际三页业务界面。
     ui->setupUi(this);
     setFont(QFont(QStringLiteral("Microsoft YaHei UI"), 10));
     setWindowTitle(QStringLiteral("图书检索与个性化推荐系统"));
+    // :/ui/... 是编译进程序的 Qt 资源路径，与磁盘上的 CSV 数据目录不同。
     QFile stylesheet(QStringLiteral(":/ui/app.qss"));
     if (stylesheet.open(QIODevice::ReadOnly))
         setStyleSheet(QString::fromUtf8(stylesheet.readAll()));
@@ -189,6 +198,7 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
         header->addLayout(metric);
     }
     root->addLayout(header);
+    // QTabWidget 组织三页；build...Page 返回 QWidget，每页只负责自己的交互入口。
     auto *tabs = new QTabWidget;
     tabs->setObjectName(QStringLiteral("mainTabs"));
     tabs->addTab(buildBooksPage(), QStringLiteral("图书管理与检索"));
@@ -201,6 +211,8 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     statusBar()->addPermanentWidget(directoryButton);
     connect(directoryButton, &QPushButton::clicked, this, &MainWindow::showDataDirectory);
 
+    // 所有页面建立后统一加载四份 CSV；失败时显示原因并禁用业务页。
+    // 调用链：MainWindow 构造 -> LibraryStore::load -> BookRepository::load / Csv::read。
     QString error;
     if (!library_.load(dataDir_, &error)) {
         QMessageBox::critical(this, QStringLiteral("读取失败"), error);
@@ -208,6 +220,8 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
         statusBar()->showMessage(QStringLiteral("数据读取失败"));
         return;
     }
+    // 编号补全和默认值从实际数据产生；优先使用小样例 U0，否则选择首个有效用户。
+    // Goodbooks 的用户是 U00～U39，不能把小样例 U0 硬套到另一套数据中。
     QStringList userIds;
     for (const User &user : library_.users())
         userIds.append(user.id);
@@ -228,6 +242,8 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
         borrowBook_->setText(library_.books().findById(QStringLiteral("B004"))
                                  ? QStringLiteral("B004") : first);
     }
+    // 把加载成功的内存数据展示出来；首次进入时即生成当前用户的推荐。
+    // 页面此时已建立，控件指针均已赋值，可安全填入图书、借阅和推荐数据。
     refreshTable();
     refreshBorrowTable();
     if (!library_.users().isEmpty())
@@ -238,6 +254,7 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
 
 QWidget *MainWindow::buildBooksPage()
 {
+    // 图书页：左侧列表与检索，右侧表单；表格禁止直接编辑，修改通过业务层校验保存。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
     columns->setContentsMargins(0, 0, 0, 0);
@@ -304,9 +321,14 @@ QWidget *MainWindow::buildBooksPage()
     deleteButton_->setEnabled(false);
     actions->addWidget(deleteButton_);
 
+    // 信号与槽：按钮 clicked/输入框回车触发操作；编号查找最终调用 BookRepository 的哈希索引。
+    // connect 指定“哪个控件的哪个信号，触发哪个接收对象的处理函数”。
+    // [this] 的 lambda 捕获当前窗口，可读取 search_ 并调用 selectBook。
     connect(searchButton, &QPushButton::clicked, this, [this] { selectBook(search_->text().trimmed()); });
     connect(search_, &QLineEdit::returnPressed, searchButton, &QPushButton::click);
     connect(keywordButton, &QPushButton::clicked, this, [this] {
+        // 关键词检索调用 KMP，返回图书数组下标；showBookRows 负责转换为表格显示行。
+        // 本操作只筛选显示内容，不改图书实体，也不写入 CSV。
         showBookRows(BookSearch::keywordRows(library_.books().all(), keyword_->text()));
         statusBar()->showMessage(QStringLiteral("关键词检索得到 %1 本图书").arg(table_->rowCount()));
     });
@@ -326,6 +348,7 @@ QWidget *MainWindow::buildBooksPage()
 
 QWidget *MainWindow::buildRecommendPage()
 {
+    // 推荐页：左侧用户、Top K 与结果，右侧录入 1～5 分；计算和保存均由独立模块处理。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
     columns->setContentsMargins(0, 0, 0, 0);
@@ -376,6 +399,8 @@ QWidget *MainWindow::buildRecommendPage()
     auto *refreshHint = label(QStringLiteral("已评分图书不会再次进入该用户的推荐候选。\n评分用户与推荐用户相同时，保存后自动刷新推荐。"), "muted");
     refreshHint->setWordWrap(true);
     actions->addWidget(refreshHint);
+    // 保存评分 -> rateBook；重新推荐 -> showRecommendations -> RecommendationService。
+    // rateBook 负责保存评分并按条件刷新；showRecommendations 重建矩阵后重新计算结果。
     connect(rateButton, &QPushButton::clicked, this, &MainWindow::rateBook);
     connect(recommendButton, &QPushButton::clicked, this, &MainWindow::showRecommendations);
     connect(recommendUser_, &QLineEdit::returnPressed, recommendButton, &QPushButton::click);
@@ -384,6 +409,7 @@ QWidget *MainWindow::buildRecommendPage()
 
 QWidget *MainWindow::buildBorrowPage()
 {
+    // 借还页连接业务层已有接口；日期由操作函数取本机当天日期，表格展示保存后的记录。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
     columns->setContentsMargins(0, 0, 0, 0);
