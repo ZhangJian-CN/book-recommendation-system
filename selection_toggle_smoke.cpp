@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFontDatabase>
 #include <QHeaderView>
+#include <QImage>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QLabel>
@@ -18,6 +19,7 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QtMath>
 
 #define CHECK(condition) do { if (!(condition)) { \
     qCritical() << "Line" << __LINE__ << ":" << #condition; return false; } } while (false)
@@ -306,6 +308,136 @@ bool programmaticSelection()
     CHECK(get<QTableWidget>(restarted, "booksTable")->rowCount() == 101);
     return true;
 }
+
+bool selectionBackgrounds()
+{
+    QTemporaryDir directory;
+    CHECK(copyData(QStringLiteral(SAMPLE_GOODBOOKS_DATA_DIR), directory));
+    const auto originalCsv = csvContents(directory);
+    MainWindow window(directory.path());
+    window.show();
+    window.activateWindow();
+    settle();
+    get<QSpinBox>(window, "topK")->setValue(12);
+    get<QPushButton>(window, "recommendButton")->click();
+    auto *tabs = get<QTabWidget>(window, "mainTabs");
+    const char *names[]{"booksTable", "recommendTable", "borrowTable"};
+    const char *editors[]{"bookTitle", "ratingBook", "borrowUser"};
+    const QString output = qEnvironmentVariable("SEAMS_SCREENSHOT_DIR");
+    if (!output.isEmpty())
+        CHECK(QDir().mkpath(output));
+    QStringList report{"table,row,state,width,height,dpr,expected,pixels,mismatches,first_x,first_y,first_color"};
+    int failures = 0;
+    QWidget otherWindow;
+    otherWindow.setWindowTitle(QStringLiteral("焦点切换验证"));
+    otherWindow.resize(200, 80);
+
+    auto inspect = [&](QTableWidget *table, int row, const QString &state, bool selected, bool save) {
+        settle();
+        const QPixmap shot = window.grab();
+        const QImage pixels = shot.toImage();
+        const qreal dpr = shot.devicePixelRatio();
+        const QPoint origin = table->viewport()->mapTo(&window, QPoint());
+        const int rowTop = table->rowViewportPosition(row);
+        // 取行底部的空白带，避开文字、24px 徽标、左侧标记和横向分隔线。
+        const int y = qCeil((origin.y() + rowTop + table->rowHeight(row) - 5) * dpr);
+        const int left = qCeil((origin.x() + 3) * dpr);
+        const int right = qFloor((origin.x() + qMin(table->viewport()->width(),
+                                                   table->horizontalHeader()->length())) * dpr) - 2;
+        const QColor expected(selected ? "#EAF2ED" : "#FFFFFF");
+        int mismatches = 0;
+        QPoint first(-1, -1);
+        QColor firstColor;
+        for (int dy = 0; dy < 3; ++dy) {
+            for (int x = left; x <= right; ++x) {
+                if (pixels.pixelColor(x, y + dy) != expected) {
+                    if (!mismatches) {
+                        first = QPoint(x, y + dy);
+                        firstColor = pixels.pixelColor(first);
+                    }
+                    ++mismatches;
+                }
+            }
+        }
+        report.append(QStringLiteral("%1,%2,%3,%4,%5,%6,%7,%8,%9,%10,%11,%12")
+            .arg(table->objectName()).arg(row + 1).arg(state).arg(window.width()).arg(window.height())
+            .arg(dpr).arg(expected.name()).arg((right - left + 1) * 3).arg(mismatches)
+            .arg(first.x()).arg(first.y()).arg(mismatches ? firstColor.name() : QStringLiteral("none")));
+        if (mismatches && ++failures <= 3)
+            qWarning() << table->objectName() << row + 1 << state << "mismatches:" << mismatches
+                       << "first:" << first << firstColor;
+        if (save && !output.isEmpty())
+            return shot.save(QDir(output).filePath(QStringLiteral("%1-row%2-%3.png")
+                .arg(table->objectName()).arg(row + 1).arg(state)));
+        return true;
+    };
+
+    const QSize regular = window.size();
+    for (const QSize &size : {regular, QSize(1000, 680)}) {
+        window.resize(size);
+        for (int page = 0; page < 3; ++page) {
+            tabs->setCurrentIndex(page);
+            settle();
+            auto *table = get<QTableWidget>(window, names[page]);
+            CHECK(table->rowCount() >= 4);
+            for (int row = 0; row < 4; ++row) {
+                const int column = row % 3 == 2 ? table->columnCount() - 1 : row % 3;
+                clickCell(table, row, column);
+                CHECK(table->selectionModel()->isRowSelected(row));
+                table->setFocus(Qt::MouseFocusReason);
+                settle();
+                CHECK(table->hasFocus());
+                CHECK(inspect(table, row, "focused", true, size == regular && row % 2 == 1));
+                get<QLineEdit>(window, editors[page])->setFocus();
+                settle();
+                CHECK(!table->hasFocus());
+                CHECK(inspect(table, row, "editor", true, false));
+                otherWindow.show();
+                otherWindow.activateWindow();
+                settle();
+                CHECK(!window.isActiveWindow());
+                CHECK(inspect(table, row, "inactive", true, false));
+                otherWindow.hide();
+                window.activateWindow();
+                settle();
+                clickCell(table, row, (column + 1) % table->columnCount());
+                CHECK(hasNoSelection(table));
+                CHECK(inspect(table, row, "reset", false, false));
+                if (page == 0)
+                    CHECK(bookWasReset(window));
+                else if (page == 2)
+                    CHECK(get<QLineEdit>(window, "returnRecord")->text().isEmpty());
+            }
+        }
+    }
+    for (int page = 0; page < 3; ++page) {
+        tabs->setCurrentIndex(page);
+        auto *table = get<QTableWidget>(window, names[page]);
+        clickCell(table, 1, 0);
+        window.showMaximized();
+        CHECK(inspect(table, 1, "maximized", true, false));
+        window.showNormal();
+        CHECK(inspect(table, 1, "restored", true, false));
+        clickCell(table, 1, 1);
+        CHECK(hasNoSelection(table));
+        const int last = table->rowCount() - 1;
+        clickCell(table, last, 0);
+        CHECK(inspect(table, last, "scrolled", true, false));
+        clickCell(table, last, 1);
+        CHECK(hasNoSelection(table));
+        table->scrollToTop();
+        CHECK(inspect(table, 0, "scroll-reset", false, false));
+    }
+    if (!output.isEmpty()) {
+        QFile file(QDir(output).filePath("pixel-audit.csv"));
+        CHECK(file.open(QIODevice::WriteOnly));
+        CHECK(file.write(report.join('\n').toUtf8()) > 0);
+    }
+    CHECK(csvContents(directory) == originalCsv);
+    qInfo() << "Selection background audit:" << report.size() - 1 << "states," << failures << "failed";
+    CHECK(failures == 0);
+    return true;
+}
 }
 
 int main(int argc, char *argv[])
@@ -315,5 +447,5 @@ int main(int argc, char *argv[])
     if (app.platformName() == QStringLiteral("offscreen")
         && QFile::exists(QStringLiteral("C:/Windows/Fonts/msyh.ttc")))
         QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
-    return sampleInteractions() && programmaticSelection() ? 0 : 1;
+    return sampleInteractions() && programmaticSelection() && selectionBackgrounds() ? 0 : 1;
 }

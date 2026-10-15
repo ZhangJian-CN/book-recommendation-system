@@ -94,7 +94,6 @@ QPushButton:disabled, QPushButton[role="primary"]:disabled, QPushButton[role="da
 }
 QTableWidget {
     background: #FFFFFF;
-    alternate-background-color: #FDFEFC;
     border: none;
     border-radius: 0;
     selection-background-color: #EAF2ED;

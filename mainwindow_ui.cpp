@@ -299,7 +299,7 @@ void configureTable(QTableWidget *table, const QStringList &headers,
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
     table->setSelectionMode(QAbstractItemView::SingleSelection);
     table->setTabKeyNavigation(false);
-    table->setAlternatingRowColors(true);
+    table->setAlternatingRowColors(false);
     table->setShowGrid(false);
     table->setWordWrap(false);
     table->setTextElideMode(Qt::ElideRight);
