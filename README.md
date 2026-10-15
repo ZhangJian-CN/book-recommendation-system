@@ -110,8 +110,8 @@ $$
 其中，$I_{uv}$ 为两名用户共同评分过的图书集合。对目标用户尚未评分的图书，根据相似用户的评分执行加权预测：
 
 $$
-\hat r_{u,i}=\frac{\sum_{v\ne u}\operatorname{sim}(u,v)\,r_{v,i}}
-{\sum_{v\ne u}\operatorname{sim}(u,v)}
+\hat r_{u,i}=\frac{\sum_{v\ne u}\mathrm{sim}(u,v)\,r_{v,i}}
+{\sum_{v\ne u}\mathrm{sim}(u,v)}
 $$
 
 计算时仅纳入对候选图书有评分、且与目标用户具有**正相似度**的其他用户。当没有共同评分或权重之和为零时，使用热门推荐逻辑回退，避免无效计算。
