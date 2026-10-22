@@ -5,12 +5,13 @@
 
 #include <QHash>
 
-//动态数组+用户——图书评分矩阵
+// 推荐侧接口简述：读取图书、用户、评分，输出可显示的推荐条目；不在本模块保存 CSV。
+// 与图书侧联调时关注传入实体、已评分排除和库存过滤，矩阵/相似度/堆是推荐侧算法。
 
-// 推荐来源区分“相似用户加权预测”和“没有有效邻居时的热门回退”。
-enum class RecommendationSource { Collaborative, Popular };
+// 推荐来源区分“相似用户加权预测”和“热门榜单/热门回退”。
+enum class RecommendationSource { Collaborative, Popular }; // 两种来源：协同预测、热门统计。
 
-struct Recommendation {
+struct Recommendation { // 一条推荐输出，打包编号、书名、分数、评分人数及来源供界面展示。
     // 编号用于定位图书实体，书名用于显示推荐结果。
     QString bookId;
     QString title;
@@ -22,17 +23,21 @@ struct Recommendation {
 };
 
 // 每次界面请求推荐时构造服务，用当前“图书、用户”和评分建立计算用矩阵。
-class RecommendationService {
-public:
+class RecommendationService { // 推荐算法服务类，组织评分矩阵、相似度与 Top K 计算。
+public: // 对外提供构造与计算接口。
     // 输入当前图书仓库、用户数组、评分数组，建立编号映射和 U*B “评分矩阵”。
     RecommendationService(const BookRepository &books, const QVector<User> &users,
-                          const QVector<Rating> &ratings);
+                          const QVector<Rating> &ratings); // 根据当前记录创建评分矩阵和编号映射。
     // 输入两个用户编号，输出共同评分余弦相似度；无效编号或无共同评分返回 0。
-    double similarity(const QString &userA, const QString &userB) const;//接口
+    double similarity(const QString &userA, const QString &userB) const; // 返回两用户共同评分的余弦相似度。
     // 输入目标用户及 K，输出排好序的至多 K 项；候选不足时不凑满 K 项。
-    QVector<Recommendation> recommend(const QString &userId, int topK) const;
+    QVector<Recommendation> recommend(const QString &userId, int topK) const; // 返回排好序的至多 topK 条推荐。
+    // 无需用户编号；只选有评分且库存大于 0 的图书，按人数、平均分、编号排序。
+    QVector<Recommendation> popularTopK(int topK) const;
+    // 是否有正评分；未知用户返回 false，调用方仍需单独验证用户存在。
+    bool hasRatings(const QString &userId) const;
 
-private:
+private: // 计算所需的内部数据，不作为界面直接修改入口。
     // 保留仓库的只读引用；界面创建服务后立即计算，仓库在此期间仍然存在。
     const BookRepository &books_;
     QVector<User> users_;

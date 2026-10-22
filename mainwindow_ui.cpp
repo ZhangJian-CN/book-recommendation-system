@@ -29,11 +29,14 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
+#include <limits>
 
 namespace {
-class ResultsTable : public QTableWidget
+// 【主窗口共用控件】真实记录数决定表格内容，minimumRows/maximumRows 仅约束显示高度。
+// 同时保存“鼠标按下之前是否已经选中”，供三页实现再次点击取消，不能只看点击后的状态。
+class ResultsTable : public QTableWidget // 自定义表格类：继承 Qt 表格，补充高度提示和再次点击取消所需状态。
 {
-public:
+public: // 可供主窗口调用的构造、尺寸提示和点击状态查询接口。
     ResultsTable(int minimumRows, int maximumRows)
         : minimumRows_(minimumRows), maximumRows_(maximumRows)
     {
@@ -67,9 +70,10 @@ public:
     }
     bool wasSelectedBeforePress() const { return selectedBeforePress_; }
 
-protected:
+protected: // 重写 Qt 事件处理；由框架派发鼠标、焦点和绘制事件。
     void mousePressEvent(QMouseEvent *event) override
     {
+        // Qt 基类会在按下时更新选择，故本次旧状态必须先记录；按业务编号判断，支持跨列再点。
         clearClickState();
         const QModelIndex hit = indexAt(event->position().toPoint());
         if (event->button() == Qt::LeftButton && hit.isValid()) {
@@ -108,7 +112,7 @@ protected:
         }
     }
 
-private:
+private: // 封装本次按下的编号及旧选择状态，外部通过查询接口读取。
     void clearClickState()
     {
         pressedId_.clear();
@@ -121,7 +125,7 @@ private:
     int maximumRows_;
 };
 
-class FormScrollArea : public QScrollArea
+class FormScrollArea : public QScrollArea // 表单滚动容器，允许小窗口内收缩，而不把整体窗口撑大。
 {
 public:
     QSize sizeHint() const override
@@ -130,7 +134,7 @@ public:
     }
 };
 
-class ElidedLabel : public QLabel
+class ElidedLabel : public QLabel // 长文本标签，在当前宽度中省略显示，完整内容仍可保留在 tooltip。
 {
 public:
     using QLabel::QLabel;
@@ -145,7 +149,9 @@ protected:
     }
 };
 
-class RowDelegate : public QStyledItemDelegate
+// 共用绘制委托：保留普通文字，额外画分类/状态徽标、淡横线及左侧选中标记。
+// 它只决定外观，不更改模型内容、选择逻辑或 CSV。
+class RowDelegate : public QStyledItemDelegate // 绘制代理类；统一负责单元格徽标、横线与选择标记。
 {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -166,7 +172,7 @@ public:
             item.text.clear();
             item.backgroundBrush = Qt::NoBrush;
             table->style()->drawControl(QStyle::CE_ItemViewItem, &item, painter, table);
-            const bool amber = text == QStringLiteral("未归还") || text.startsWith(QStringLiteral("热门回退"));
+            const bool amber = text == QStringLiteral("未归还") || text.startsWith(QStringLiteral("热门"));
             QFont font = item.font;
             font.setPixelSize(12);
             const QFontMetrics metrics(font);
@@ -242,6 +248,7 @@ QLineEdit *input(const char *name, const QString &hint = {})
 
 QSpinBox *number(const char *name, int minimum, int maximum, int value)
 {
+    // 读懂四个参数即可对应界面：控件名、下界、上界、初值。库存可以是 0，评分下界为 1。
     // 数字框限定范围并设置初值；业务层仍再次校验，不能只依赖界面输入限制。
     auto *widget = new QSpinBox;
     widget->setObjectName(QString::fromLatin1(name));
@@ -254,6 +261,7 @@ QSpinBox *number(const char *name, int minimum, int maximum, int value)
 
 QPushButton *button(const QString &text, const char *name, const char *role = "secondary")
 {
+    // text 是可见文字，name 是测试/查找用的标识，role 供 QSS 选择主按钮或危险按钮外观。
     auto *widget = new QPushButton(text);
     widget->setObjectName(QString::fromLatin1(name));
     widget->setProperty("role", role);
@@ -274,6 +282,7 @@ void field(QVBoxLayout *layout, const QString &caption, QWidget *widget)
 
 QVBoxLayout *scrollingForm(QVBoxLayout *layout)
 {
+    // 小窗口下右侧表单允许内部滚动，避免新增/保存等操作被挤出可用屏幕。
     auto *scroll = new FormScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -291,6 +300,8 @@ QVBoxLayout *scrollingForm(QVBoxLayout *layout)
 void configureTable(QTableWidget *table, const QStringList &headers,
                     const QList<int> &widths, int stretchColumn, bool ranks = false)
 {
+    // 【表格接口】headers 与 widths 按列对应；stretchColumn 指定哪一列吸收剩余宽度。
+    // 不允许直接编辑单元格，保证每次修改都经过右侧表单和业务校验，而非只改显示内容。
     // 所有业务表格统一为整行单选、禁止直接编辑；表单保存才能进入业务校验和持久化。
     table->setColumnCount(headers.size());
     table->setItemDelegate(new RowDelegate(table));
@@ -300,6 +311,7 @@ void configureTable(QTableWidget *table, const QStringList &headers,
     table->setSelectionMode(QAbstractItemView::SingleSelection);
     table->setTabKeyNavigation(false);
     table->setAlternatingRowColors(false);
+    // 本项目已验证：交替行状态会在非整数显示缩放下产生选中白缝，因此采用统一白底。
     table->setShowGrid(false);
     table->setWordWrap(false);
     table->setTextElideMode(Qt::ElideRight);
@@ -311,13 +323,13 @@ void configureTable(QTableWidget *table, const QStringList &headers,
     table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     table->horizontalHeader()->setMinimumHeight(36);
     table->horizontalHeader()->setStretchLastSection(false);
-    for (int column = 0; column < headers.size(); ++column) {
+    for (int column = 0; column < headers.size(); ++column) { // 第一轮只设置每一列表头的对齐方式。
         const bool centered = table->objectName() == QStringLiteral("borrowTable")
             || column == 0 || (table->objectName() == QStringLiteral("booksTable") && column >= 3)
             || (ranks && column == 2);
         table->horizontalHeaderItem(column)->setTextAlignment(centered ? Qt::AlignCenter : Qt::AlignLeft | Qt::AlignVCenter);
     }
-    for (int column = 0; column < headers.size(); ++column) {
+    for (int column = 0; column < headers.size(); ++column) { // 第二轮配置列宽：指定列拉伸，其余列按 widths 固定。
         table->horizontalHeader()->setSectionResizeMode(column,
             column == stretchColumn ? QHeaderView::Stretch : QHeaderView::Fixed);
         if (column != stretchColumn)
@@ -363,6 +375,10 @@ QWidget *separator()
 }
 }
 
+// 【曹振江重点：主窗口如何组织整个系统】
+// dataDir 是实际 CSV 目录，parent 交给 Qt 管理窗口层级；构造时保存路径并建立控件。
+// 先创建三个页面及其信号连接，再加载数据、刷新显示；控件和业务数据由此接上。
+// 真正的图书页布局在 buildBooksPage，不应只打开 Designer 的 mainwindow.ui 寻找所有控件。
 MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), dataDir_(dataDir)
 {
@@ -403,8 +419,8 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     auto *metricRow = new QHBoxLayout(metrics);
     metricRow->setContentsMargins(10, 8, 10, 8);
     metricRow->setSpacing(12);
-    for (int i = 0; i < 4; ++i) {
-        if (i) {
+    for (int i = 0; i < 4; ++i) { // 依次创建图书、用户、评分、借阅四个顶部统计项。
+        if (i) { // i=0 不放分隔线；之后每个统计项前放一条线。
             auto *line = new QFrame;
             line->setProperty("role", "metricSeparator");
             line->setFixedSize(1, 22);
@@ -464,18 +480,18 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
     // 编号补全和默认值从实际数据产生；优先使用小样例 U0，否则选择首个有效用户。
     // Goodbooks 的用户是 U00～U39，不能把小样例 U0 硬套到另一套数据中。
     QStringList userIds;
-    for (const User &user : library_.users())
-        userIds.append(user.id);
+    for (const User &user : library_.users()) // 按实际加载的用户记录收集编号，兼容 U0 和 U00 两套样例。
+        userIds.append(user.id); // 用户补全只保存编号，不在输入框中存整个 User。
     auto *users = new QStringListModel(userIds, this);
-    for (auto *edit : {ratingUser_, recommendUser_, borrowUser_}) {
-        complete(edit, users);
+    for (auto *edit : {ratingUser_, recommendUser_, borrowUser_}) { // 三个页面的用户输入框共用同一份补全数据。
+        complete(edit, users); // 给当前输入框安装补全器；后面的分支再填一个实际存在的默认用户。
         if (!library_.users().isEmpty())
             edit->setText(library_.hasUser(QStringLiteral("U0"))
                               ? QStringLiteral("U0") : library_.users().first().id);
     }
     bookIds_ = new QStringListModel(this);
-    for (auto *edit : {search_, ratingBook_, borrowBook_})
-        complete(edit, bookIds_);
+    for (auto *edit : {search_, ratingBook_, borrowBook_}) // 编号查找、评分图书和借出图书共用编号列表。
+        complete(edit, bookIds_); // 数据模型随后由 refreshSummary 填充，新增/删除后会统一更新。
     if (!library_.books().all().isEmpty()) {
         const QString first = library_.books().all().first().id;
         ratingBook_->setText(library_.books().findById(QStringLiteral("B003"))
@@ -495,6 +511,9 @@ MainWindow::MainWindow(const QString &dataDir, QWidget *parent)
 
 QWidget *MainWindow::buildBooksPage()
 {
+    // 【曹振江重点：把图书算法连接到界面】先创建左右布局，再创建控件，最后连接事件。
+    // 本函数返回 QWidget* 交给标签页管理；显示数据和保存修改由后面的响应函数负责。
+    // 学习时先看 objectName/控件指针，再直接跳到本函数末尾的 connect 阅读交互链路。
     // 图书页：左侧列表与检索，右侧表单；表格禁止直接编辑，修改通过业务层校验保存。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
@@ -558,11 +577,17 @@ QWidget *MainWindow::buildBooksPage()
     title_ = input("bookTitle");
     author_ = input("bookAuthor");
     category_ = input("bookCategory");
-    stock_ = number("bookStock", 0, 1000000, 0);
+    stock_ = number("bookStock", 0, std::numeric_limits<int>::max(), 0);
+    // 此处是输入层范围；BookRepository 仍独立检查库存非负，不能把控件限制当作唯一校验。
     field(form, QStringLiteral("书名"), title_);
     field(form, QStringLiteral("作者"), author_);
     field(form, QStringLiteral("分类"), category_);
     field(form, QStringLiteral("库存"), stock_);
+    stockNotice_ = label({}, "muted", "stockNotice");
+    stockNotice_->setWordWrap(true);
+    stockNotice_->hide();
+    form->addWidget(stockNotice_);
+    connect(stock_, &QSpinBox::valueChanged, this, [this] { updateStockNotice(); });
     form->addStretch();
     auto *buttons = new QHBoxLayout;
     saveButton_ = button(QStringLiteral("保存修改"), "saveButton", "primary");
@@ -581,8 +606,10 @@ QWidget *MainWindow::buildBooksPage()
     // connect 指定“哪个控件的哪个信号，触发哪个接收对象的处理函数”。
     // [this] 的 lambda 捕获当前窗口，可读取 search_ 并调用 selectBook。
     connect(searchButton, &QPushButton::clicked, this, [this] { selectBook(search_->text().trimmed()); });
+    // 编号框回车转发为同一个按钮点击，避免维护两套查询逻辑。
     connect(search_, &QLineEdit::returnPressed, searchButton, &QPushButton::click);
     connect(keywordButton, &QPushButton::clicked, this, [this] {
+        // 算法输出数组下标，展示函数按下标取实体；这一步仅筛选，不删除或保存图书。
         // 关键词检索调用 KMP，返回图书数组下标；showBookRows 负责转换为表格显示行。
         // 本操作只筛选显示内容，不改图书实体，也不写入 CSV。
         showBookRows(BookSearch::keywordRows(library_.books().all(), keyword_->text()));
@@ -594,12 +621,18 @@ QWidget *MainWindow::buildBooksPage()
         showOperationMessage(QStringLiteral("已显示全部图书"));
     });
     connect(table_, &QTableWidget::cellClicked, this, [this, bookTable](int row, int) {
+        // 使用 ResultsTable 在按下前保存的状态；第二次点任意列都能取消同一业务条目。
         if (!bookTable->isLeftRowClick(row))
             return;
         if (bookTable->wasSelectedBeforePress())
             resetBookSelection();
+    });
+    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
+        const auto rows = table_->selectionModel()->selectedRows(0);
+        if (rows.isEmpty())
+            resetBookSelection();
         else
-            selectBook(table_->item(row, 0)->text());
+            selectBook(table_->item(rows.first().row(), 0)->text());
     });
     connect(addButton, &QPushButton::clicked, this, &MainWindow::addBook);
     connect(saveButton_, &QPushButton::clicked, this, &MainWindow::saveSelected);
@@ -609,6 +642,7 @@ QWidget *MainWindow::buildBooksPage()
 
 QWidget *MainWindow::buildRecommendPage()
 {
+    // 推荐侧简述：收集用户、Top K 与评分输入，按钮连接到 rateBook/showRecommendations。
     // 推荐页：左侧用户、Top K 与结果，右侧录入 1～5 分；计算和保存均由独立模块处理。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
@@ -617,7 +651,9 @@ QWidget *MainWindow::buildRecommendPage()
     auto *results = card(columns);
     recommendSummary_ = label({}, "count", "recommendSummary");
     pageHeading(results, QStringLiteral("推荐结果"), recommendSummary_);
-    results->addWidget(label(QStringLiteral("按预测分降序展示 · 保留四位小数"), "muted"));
+    recommendHint_ = label({}, "muted", "recommendHint");
+    recommendHint_->setWordWrap(true);
+    results->addWidget(recommendHint_);
     auto *toolbar = new QHBoxLayout;
     recommendUser_ = input("recommendUser", QStringLiteral("用户编号"));
     recommendUser_->setMaximumWidth(150);
@@ -631,6 +667,12 @@ QWidget *MainWindow::buildRecommendPage()
     toolbar->addWidget(recommendButton);
     toolbar->addStretch();
     results->addLayout(toolbar);
+    auto *popularRow = new QHBoxLayout;
+    auto *popularButton = button(QStringLiteral("热门榜单"), "popularButton");
+    popularButton->setToolTip(QStringLiteral("无需用户编号，查看有评分且有库存的热门图书"));
+    popularRow->addWidget(popularButton);
+    popularRow->addStretch();
+    results->addLayout(popularRow);
     recommendEmpty_ = label(QStringLiteral("<img src=\":/ui/icons/list.png\" width=\"16\" height=\"16\">　暂无可推荐图书<br>请确认是否已评完所有图书，或候选图书库存为零。"),
                             "empty", "recommendEmpty");
     recommendEmpty_->setWordWrap(true);
@@ -640,8 +682,10 @@ QWidget *MainWindow::buildRecommendPage()
     recommendTable_ = recommendTable;
     recommendTable_->setObjectName(QStringLiteral("recommendTable"));
     configureTable(recommendTable_, {QStringLiteral("编号"), QStringLiteral("书名"),
-                                    QStringLiteral("分数"), QStringLiteral("来源")},
-                   {80, 0, 90, 175}, 1, true);
+                                    QStringLiteral("分数"), QStringLiteral("来源"), QStringLiteral("评分人数")},
+                   {80, 0, 90, 130, 80}, 1, true);
+    recommendTable_->horizontalHeaderItem(4)->setTextAlignment(Qt::AlignCenter);
+    recommendTable_->horizontalHeaderItem(4)->setToolTip(QStringLiteral("给该图书评分的用户数；热门榜优先按此人数排序"));
     results->addWidget(recommendTable_, 1);
     connect(recommendTable_, &QTableWidget::cellClicked, this, [this, recommendTable](int row, int) {
         if (!recommendTable->isLeftRowClick(row))
@@ -680,12 +724,11 @@ QWidget *MainWindow::buildRecommendPage()
     guidanceLayout->setContentsMargins(18, 0, 18, 0);
     guidanceLayout->setSpacing(6);
     guidanceLayout->addWidget(label(QStringLiteral("推荐说明"), "guidanceTitle"));
-    auto *candidateHint = label(QStringLiteral("<p style='line-height:120%; margin-top:0; margin-bottom:0'>已评分图书会退出该用户的推荐候选。</p>"), "guidance");
-    candidateHint->setTextFormat(Qt::RichText);
-    candidateHint->setWordWrap(true);
-    guidanceLayout->addWidget(candidateHint);
+    recommendRule_ = label(QStringLiteral("个人推荐排除已评分及无库存图书。"), "guidance", "recommendRule");
+    recommendRule_->setWordWrap(true);
+    guidanceLayout->addWidget(recommendRule_);
     guidanceLayout->addSpacing(6);
-    auto *refreshHint = label(QStringLiteral("<p style='line-height:120%; margin-top:0; margin-bottom:0'>评分用户与推荐用户相同时，<br>保存后自动刷新推荐结果。</p>"), "guidance");
+    auto *refreshHint = label(QStringLiteral("<p style='line-height:120%; margin-top:0; margin-bottom:0'>保存评分或库存变化后，<br>自动刷新当前已生成的结果。</p>"), "guidance");
     refreshHint->setTextFormat(Qt::RichText);
     refreshHint->setWordWrap(true);
     guidanceLayout->addWidget(refreshHint);
@@ -695,12 +738,14 @@ QWidget *MainWindow::buildRecommendPage()
     // rateBook 负责保存评分并按条件刷新；showRecommendations 重建矩阵后重新计算结果。
     connect(rateButton, &QPushButton::clicked, this, &MainWindow::rateBook);
     connect(recommendButton, &QPushButton::clicked, this, &MainWindow::showRecommendations);
+    connect(popularButton, &QPushButton::clicked, this, &MainWindow::showPopularRecommendations);
     connect(recommendUser_, &QLineEdit::returnPressed, recommendButton, &QPushButton::click);
     return page;
 }
 
 QWidget *MainWindow::buildBorrowPage()
 {
+    // 借还侧简述：显示记录并提供借出、归还表单；日期、库存与重复操作规则由业务层处理。
     // 借还页连接业务层已有接口；日期由操作函数取本机当天日期，表格展示保存后的记录。
     auto *page = new QWidget;
     auto *columns = new QHBoxLayout(page);
@@ -757,8 +802,13 @@ QWidget *MainWindow::buildBorrowPage()
             return;
         if (borrowTable->wasSelectedBeforePress())
             resetBorrowSelection();
+    });
+    connect(borrowTable_->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
+        const auto rows = borrowTable_->selectionModel()->selectedRows(0);
+        if (rows.isEmpty())
+            resetBorrowSelection();
         else
-            returnRecord_->setText(borrowTable_->item(row, 0)->text());
+            returnRecord_->setText(borrowTable_->item(rows.first().row(), 0)->text());
     });
     connect(returnRecord_, &QLineEdit::textChanged, this, &MainWindow::updateBorrowSelection);
     connect(returnRecord_, &QLineEdit::textChanged, this, [this] {
@@ -771,7 +821,7 @@ QWidget *MainWindow::buildBorrowPage()
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
-    for (auto *table : {table_, recommendTable_, borrowTable_})
+    for (auto *table : {table_, recommendTable_, borrowTable_}) // 尺寸变化时逐个通知结果表重新计算几何提示。
         if (table) {
             table->verticalHeader()->setDefaultSectionSize(height() < 720 ? 40 : 44);
             table->updateGeometry();
@@ -780,6 +830,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 void MainWindow::showDataDirectory()
 {
+    // 这个对话框展示当前已加载目录，便于确认演示副本；它不是重新导入 CSV 的文件选择器。
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("当前数据目录"));
     dialog.resize(620, 150);

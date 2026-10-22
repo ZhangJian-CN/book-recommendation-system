@@ -1,3 +1,4 @@
+// UI 测试简述：验证布局、数字控件、焦点、图书/推荐/借还业务，以及保存后重建窗口。
 #include "mainwindow.h"
 
 #include <QApplication>
@@ -17,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QProcess>
 #include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -27,6 +29,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <limits>
 
 #define CHECK(condition) do { if (!(condition)) { \
     qCritical() << "Line" << __LINE__ << ":" << #condition; return false; } } while (false)
@@ -108,7 +111,7 @@ bool checkLayout(MainWindow &window, const QSize &size, bool captureCompact = fa
     const QList<QStringList> controls{
         {"bookSearch", "keywordSearch", "newBookId", "bookTitle", "bookAuthor", "bookCategory",
          "bookStock", "searchButton", "keywordButton", "showAllButton", "saveButton", "addBookButton", "deleteBookButton"},
-        {"recommendUser", "topK", "recommendButton", "ratingUser", "ratingBook", "ratingScore", "rateButton"},
+        {"recommendUser", "topK", "recommendButton", "popularButton", "ratingUser", "ratingBook", "ratingScore", "rateButton"},
         {"borrowUser", "borrowBook", "borrowButton", "returnRecord", "returnButton"}};
     for (int page = 0; page < controls.size(); ++page) {
         tabs->setCurrentIndex(page);
@@ -188,7 +191,7 @@ bool checkSpinBoxes(MainWindow &window)
 {
     const QList<QSpinBox *> boxes{get<QSpinBox>(window, "bookStock"),
                                   get<QSpinBox>(window, "topK"), get<QSpinBox>(window, "ratingScore")};
-    const int minima[]{0, 1, 1}, maxima[]{1000000, 1000, 5}, defaults[]{0, 2, 4};
+    const int minima[]{0, 1, 1}, maxima[]{std::numeric_limits<int>::max(), 1000, 5}, defaults[]{0, 2, 4};
     const int middle[]{3, 5, 3};
     auto *tabs = get<QTabWidget>(window, "mainTabs");
     for (int index = 0; index < boxes.size(); ++index) {
@@ -637,6 +640,399 @@ bool sampleStates()
     return true;
 }
 
+bool captureColdStart(MainWindow &window, const QString &name)
+{
+    const QString directory = qEnvironmentVariable("COLD_SCREENSHOT_DIR");
+    if (directory.isEmpty())
+        return true;
+    CHECK(QDir().mkpath(directory));
+    get<QTabWidget>(window, "mainTabs")->setCurrentIndex(1);
+    QApplication::processEvents();
+    CHECK(window.grab().save(QDir(directory).filePath(name + ".png")));
+    return true;
+}
+
+bool coldStartReload(const QString &directory)
+{
+    MainWindow restarted(directory);
+    restarted.resize(1280, 720);
+    restarted.show();
+    get<QTabWidget>(restarted, "mainTabs")->setCurrentIndex(1);
+    get<QLineEdit>(restarted, "recommendUser")->setText("UCOLD");
+    get<QSpinBox>(restarted, "topK")->setValue(4);
+    get<QPushButton>(restarted, "recommendButton")->click();
+    CHECK(get<QLabel>(restarted, "ratingCount")->text() == "11");
+    CHECK(get<QLabel>(restarted, "userCount")->text() == "4");
+    CHECK(!get<QLabel>(restarted, "recommendHint")->text().contains(QStringLiteral("暂无评分")));
+    CHECK(get<QTableWidget>(restarted, "recommendTable")->rowCount() == 3);
+    get<QPushButton>(restarted, "popularButton")->click();
+    CHECK(get<QTableWidget>(restarted, "recommendTable")->item(0, 2)->text() == "3.7500");
+    CHECK(get<QTableWidget>(restarted, "recommendTable")->item(0, 4)->text() == "4");
+    CHECK(captureColdStart(restarted, "reloaded-global"));
+    return true;
+}
+
+bool coldStartStates()
+{
+    QTemporaryDir dir;
+    CHECK(copyData(QStringLiteral(SAMPLE_COLD_START_DATA_DIR), dir));
+    {
+        MainWindow window(dir.path());
+        window.resize(1280, 720);
+        window.show();
+        auto *tabs = get<QTabWidget>(window, "mainTabs");
+        tabs->setCurrentIndex(1);
+        QApplication::processEvents();
+        auto *table = get<QTableWidget>(window, "recommendTable");
+        auto *user = get<QLineEdit>(window, "recommendUser");
+        auto *topK = get<QSpinBox>(window, "topK");
+        auto *popular = get<QPushButton>(window, "popularButton");
+        auto *recommend = get<QPushButton>(window, "recommendButton");
+        auto *hint = get<QLabel>(window, "recommendHint");
+        auto *summary = get<QLabel>(window, "recommendSummary");
+        CHECK(table->columnCount() == 5 && table->horizontalHeaderItem(4)->text() == QStringLiteral("评分人数"));
+        CHECK(table->item(0, 0)->text() == "B003" && table->item(0, 2)->text() == "3.8889");
+        const QStringList ids{"B001", "B002", "B003", "B004"};
+        const QStringList scores{"3.6667", "2.3333", "3.0000", "3.0000"};
+        // CS03：未知或空用户仍可主动浏览，点击个人推荐则报错且保留已有结果。
+        user->setText("unregistered-draft");
+        topK->setValue(4);
+        popular->click();
+        CHECK(user->text() == "unregistered-draft" && get<QLabel>(window, "userCount")->text() == "4");
+        CHECK(summary->text().contains(QStringLiteral("热门榜单")) && table->rowCount() == 4);
+        CHECK(table->horizontalHeaderItem(2)->text() == QStringLiteral("平均分"));
+        CHECK(!table->verticalHeader()->isHidden());
+        for (int i = 0; i < ids.size(); ++i) {
+            CHECK(table->item(i, 0)->text() == ids[i] && table->item(i, 2)->text() == scores[i]);
+            CHECK(table->item(i, 3)->text() == QStringLiteral("热门榜单"));
+            CHECK(table->item(i, 4)->text() == (i < 2 ? "3" : "2"));
+        }
+        for (const QString &invalid : QStringList{"unregistered-draft", ""}) {
+            user->setText(invalid);
+            const QString previous = summary->text();
+            answerDialog(window);
+            recommend->click();
+            CHECK(user->text() == invalid && table->rowCount() == 4 && summary->text() == previous);
+            popular->click();
+            CHECK(user->text() == invalid && table->rowCount() == 4);
+        }
+        CHECK(checkLayout(window, QSize(1280, 720)));
+        CHECK(captureColdStart(window, "global-1280x720"));
+        CHECK(checkLayout(window, QSize(1000, 680)));
+        CHECK(captureColdStart(window, "global-1000x680"));
+        window.resize(1280, 720);
+
+        // CS02/CS09：UCOLD 第一条评分后自动从热门切换到个人推荐，草稿保持原值。
+        user->setText("UCOLD");
+        recommend->click();
+        CHECK(hint->text().contains(QStringLiteral("用户 UCOLD 暂无评分")));
+        CHECK(table->rowCount() == 4 && table->item(0, 0)->text() == "B001");
+        CHECK(captureColdStart(window, "cold-start"));
+        user->setText("unsent-personal-draft");
+        topK->setValue(1);
+        get<QLineEdit>(window, "ratingUser")->setText("UCOLD");
+        get<QLineEdit>(window, "ratingBook")->setText("B001");
+        get<QSpinBox>(window, "ratingScore")->setValue(4);
+        get<QPushButton>(window, "rateButton")->click();
+        CHECK(get<QLabel>(window, "ratingCount")->text() == "11");
+        CHECK(user->text() == "unsent-personal-draft" && topK->value() == 1);
+        CHECK(!hint->text().contains(QStringLiteral("暂无评分")));
+        CHECK(table->horizontalHeaderItem(2)->text() == QStringLiteral("分数"));
+        CHECK(table->rowCount() == 3 && table->item(0, 0)->text() == "B003");
+        CHECK(table->item(0, 2)->text() == "3.0000" && table->item(1, 0)->text() == "B004");
+        CHECK(table->item(2, 0)->text() == "B002" && table->item(2, 2)->text() == "2.3333");
+        CHECK(table->item(0, 3)->text() == QStringLiteral("协同过滤预测"));
+        CHECK(captureColdStart(window, "first-rating-personal"));
+
+        // CS10/CS11：全局模式保存任意用户评分，保持全局榜，不提交用户和 K 的草稿。
+        topK->setValue(4);
+        popular->click();
+        CHECK(table->item(0, 0)->text() == "B001" && table->item(0, 4)->text() == "4");
+        CHECK(table->item(0, 2)->text() == "3.7500");
+        user->setText("unsent-global-draft");
+        topK->setValue(1);
+        table->selectRow(0);
+        get<QLineEdit>(window, "ratingUser")->setText("U1");
+        get<QSpinBox>(window, "ratingScore")->setValue(4);
+        get<QPushButton>(window, "rateButton")->click();
+        CHECK(table->rowCount() == 4 && table->item(0, 2)->text() == "3.5000");
+        CHECK(table->item(0, 4)->text() == "4" && get<QLabel>(window, "ratingCount")->text() == "11");
+        CHECK(summary->text().contains(QStringLiteral("热门榜单")));
+        CHECK(user->text() == "unsent-global-draft" && topK->value() == 1);
+        CHECK(table->selectedItems().size() == 5 && table->item(table->currentRow(), 0)->text() == "B001");
+        get<QSpinBox>(window, "ratingScore")->setValue(5);
+        get<QPushButton>(window, "rateButton")->click();
+        CHECK(table->item(0, 2)->text() == "3.7500");
+
+        // CS12：库存归零移榜，归还恢复；改书名同步；切页状态不误读无效草稿。
+        tabs->setCurrentIndex(2);
+        get<QLineEdit>(window, "borrowUser")->setText("UCOLD");
+        get<QLineEdit>(window, "borrowBook")->setText("B003");
+        get<QPushButton>(window, "borrowButton")->click();
+        CHECK(table->rowCount() == 3);
+        for (int row = 0; row < table->rowCount(); ++row)
+            CHECK(table->item(row, 0)->text() != "B003");
+        tabs->setCurrentIndex(1);
+        CHECK(window.statusBar()->currentMessage().contains(QStringLiteral("热门榜单 · 3 条")));
+        tabs->setCurrentIndex(2);
+        get<QPushButton>(window, "returnButton")->click();
+        CHECK(table->rowCount() == 4 && table->item(2, 0)->text() == "B003");
+        tabs->setCurrentIndex(0);
+        get<QLineEdit>(window, "bookSearch")->setText("B003");
+        get<QPushButton>(window, "searchButton")->click();
+        const QString title = get<QLineEdit>(window, "bookTitle")->text();
+        get<QLineEdit>(window, "bookTitle")->setText(title + QStringLiteral("（榜单刷新核对）"));
+        get<QPushButton>(window, "saveButton")->click();
+        CHECK(table->item(2, 1)->text().contains(QStringLiteral("榜单刷新核对")));
+        get<QSpinBox>(window, "bookStock")->setValue(0);
+        get<QPushButton>(window, "saveButton")->click();
+        CHECK(table->rowCount() == 3);
+        get<QSpinBox>(window, "bookStock")->setValue(1);
+        get<QLineEdit>(window, "bookTitle")->setText(title);
+        get<QPushButton>(window, "saveButton")->click();
+        CHECK(table->rowCount() == 4 && table->item(2, 1)->text() == title);
+        tabs->setCurrentIndex(1);
+        CHECK(window.statusBar()->currentMessage().contains(QStringLiteral("热门榜单 · 4 条")));
+        CHECK(user->text() == "unsent-global-draft" && topK->value() == 1);
+        // 真实鼠标再次点击取消选择；方向键仍可在五列表格中导航。
+        table->clearSelection();
+        table->setCurrentCell(0, 0);
+        const QPoint point = table->visualItemRect(table->item(0, 0)).center();
+        for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+            QMouseEvent event(type, QPointF(point), QPointF(table->viewport()->mapToGlobal(point)),
+                Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(table->viewport(), &event);
+        }
+        CHECK(table->selectedItems().isEmpty());
+        table->selectRow(0);
+        table->setFocus();
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(table, &down);
+        CHECK(table->currentRow() == 1);
+        CHECK(captureColdStart(window, "global-after-first-rating"));
+        window.close();
+    }
+    // CS13：在全新进程中加载相同副本，排除当前 QApplication/窗口内存状态的影响。
+    QProcess restarted;
+    restarted.start(QCoreApplication::applicationFilePath(), {"--cold-restart", dir.path()});
+    CHECK(restarted.waitForFinished(10000));
+    if (restarted.exitCode() != 0)
+        qWarning().noquote() << restarted.readAllStandardError();
+    CHECK(restarted.exitStatus() == QProcess::NormalExit && restarted.exitCode() == 0);
+
+    QTemporaryDir emptyDir;
+    CHECK(copyData(QStringLiteral(SAMPLE_COLD_START_DATA_DIR), emptyDir));
+    QFile ratings(emptyDir.filePath("ratings.csv"));
+    CHECK(ratings.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    CHECK(ratings.write("user_id,book_id,score\n") > 0);
+    ratings.close();
+    MainWindow empty(emptyDir.path());
+    empty.show();
+    get<QPushButton>(empty, "popularButton")->click();
+    CHECK(get<QTableWidget>(empty, "recommendTable")->rowCount() == 0);
+    CHECK(!get<QLabel>(empty, "recommendEmpty")->isHidden());
+    CHECK(get<QLabel>(empty, "recommendEmpty")->text() == QStringLiteral("暂无符合条件的热门图书，需有评分且有可借库存"));
+    CHECK(checkLayout(empty, QSize(1000, 680)));
+    CHECK(captureColdStart(empty, "empty-1000x680"));
+    qInfo() << "CS02-CS03, CS09-CS13 UI PASS: modes, drafts, rating/stock refresh, selection, reload and empty state";
+    return true;
+}
+
+bool editorConsistency()
+{
+    QTemporaryDir dir;
+    CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), dir));
+    QString error;
+    {
+        MainWindow window(dir.path());
+        window.resize(1000, 680);
+        window.show();
+        auto *search = get<QLineEdit>(window, "bookSearch");
+        auto *title = get<QLineEdit>(window, "bookTitle");
+        auto *author = get<QLineEdit>(window, "bookAuthor");
+        auto *category = get<QLineEdit>(window, "bookCategory");
+        auto *stock = get<QSpinBox>(window, "bookStock");
+        auto *save = get<QPushButton>(window, "saveButton");
+        auto *borrow = get<QPushButton>(window, "borrowButton");
+        auto *giveBack = get<QPushButton>(window, "returnButton");
+        auto *tabs = get<QTabWidget>(window, "mainTabs");
+        search->setText("B004");
+        get<QPushButton>(window, "searchButton")->click();
+        title->setText("Draft title");
+        author->setText("Draft author");
+        category->setText("Draft category");
+        borrow->click();
+        CHECK(stock->value() == 1); // R1-A/C: unchanged stock tracks borrow; text drafts survive.
+        CHECK(title->text() == "Draft title" && author->text() == "Draft author" && category->text() == "Draft category");
+        tabs->setCurrentIndex(0);
+        QApplication::processEvents();
+        const QString screenshots = qEnvironmentVariable("CONSISTENCY_SCREENSHOT_DIR");
+        if (!screenshots.isEmpty()) {
+            CHECK(QDir().mkpath(screenshots));
+            CHECK(window.grab().save(QDir(screenshots).filePath("draft-after-borrow-1000x680.png")));
+            for (QWidget *ancestor = stock->parentWidget(); ancestor; ancestor = ancestor->parentWidget()) {
+                if (auto *scroll = qobject_cast<QScrollArea *>(ancestor)) {
+                    scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+                    break;
+                }
+            }
+            QApplication::processEvents();
+            CHECK(window.grab().save(QDir(screenshots).filePath("stock-and-draft-after-borrow-1000x680.png")));
+        }
+        save->click();
+        CHECK(stock->value() == 1 && get<QTableWidget>(window, "booksTable")->item(3, 4)->text() == "1");
+        giveBack->click();
+        CHECK(stock->value() == 2);
+        author->setText("Returned author");
+        save->click(); // R1-B
+        // R1-D/F: conflict cancellation never writes or discards any draft.
+        stock->setValue(7);
+        title->setText("Conflict title");
+        borrow->click();
+        CHECK(stock->value() == 7 && title->text() == "Conflict title");
+        QFile books(dir.filePath("books.csv"));
+        CHECK(books.open(QIODevice::ReadOnly));
+        const QByteArray before = books.readAll(); books.close();
+        answerDialog(window); // Cancel the conflict.
+        save->click();
+        CHECK(books.open(QIODevice::ReadOnly));
+        CHECK(books.readAll() == before); books.close();
+        CHECK(stock->value() == 7 && title->text() == "Conflict title");
+        get<QLineEdit>(window, "borrowBook")->setText("B003");
+        borrow->click(); // Other-book stock change and full table refresh.
+        CHECK(stock->value() == 7 && title->text() == "Conflict title");
+        giveBack->click();
+        // R1-E: use current inventory only, then save explicitly.
+        bool resolved = false;
+        QTimer::singleShot(0, &window, [&] {
+            for (auto *box : window.findChildren<QMessageBox *>()) {
+                if (!box->isVisible()) continue;
+                if (!screenshots.isEmpty())
+                    box->grab().save(QDir(screenshots).filePath("stock-conflict.png"));
+                for (auto *action : box->buttons()) {
+                    if (action->text() == QStringLiteral("使用最新库存")) {
+                        resolved = true; action->click(); return;
+                    }
+                }
+                box->reject();
+            }
+        });
+        save->click();
+        CHECK(resolved && stock->value() == 1 && title->text() == "Conflict title");
+        save->click();
+        // R1-G: duplicate borrow failure and invalid save keep form and files.
+        get<QLineEdit>(window, "borrowBook")->setText("B004");
+        title->setText("Failure draft");
+        answerDialog(window); borrow->click();
+        CHECK(title->text() == "Failure draft" && stock->value() == 1);
+        title->clear();
+        answerDialog(window); save->click();
+        CHECK(title->text().isEmpty() && window.statusBar()->currentMessage() == QStringLiteral("保存失败"));
+        const QString booksPath = dir.filePath("books.csv"), held = dir.filePath("books.csv.held");
+        CHECK(QFile::rename(booksPath, held) && QDir(dir.path()).mkdir("books.csv"));
+        title->setText("I/O failure draft");
+        answerDialog(window); save->click();
+        CHECK(title->text() == "I/O failure draft" && stock->value() == 1);
+        CHECK(window.statusBar()->currentMessage() == QStringLiteral("保存失败"));
+        CHECK(QDir(dir.path()).rmdir("books.csv") && QFile::rename(held, booksPath));
+    }
+    LibraryStore loaded;
+    CHECK(loaded.load(dir.path(), &error));
+    CHECK(loaded.books().findById("B004")->title == "Conflict title");
+    CHECK(loaded.books().findById("B004")->author == "Returned author");
+    CHECK(loaded.books().findById("B004")->category == "Draft category");
+    CHECK(loaded.books().findById("B004")->stock == 1);
+    CHECK(loaded.borrowRecords()[2].status == "returned" && loaded.borrowRecords()[3].status == "borrowed");
+    qInfo() << "R1-A-G PASS: stock reconciliation, text drafts, cancel/use-current conflict, failed actions and reload";
+    return true;
+}
+
+bool inventoryRange()
+{
+    const int maximum = std::numeric_limits<int>::max();
+    for (int value : {0, 1, 1000000, 1000001, maximum - 1, maximum}) {
+        QTemporaryDir dir;
+        CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), dir));
+        QString error;
+        {
+            LibraryStore store;
+            CHECK(store.load(dir.path(), &error));
+            Book book = *store.books().findById("B004");
+            book.stock = value;
+            CHECK(store.updateBook(book, &error));
+        }
+        {
+            MainWindow window(dir.path());
+            window.resize(1000, 680);
+            window.show();
+            get<QLineEdit>(window, "bookSearch")->setText("B004");
+            get<QPushButton>(window, "searchButton")->click();
+            auto *stock = get<QSpinBox>(window, "bookStock");
+            CHECK(stock->maximum() == maximum && stock->value() == value);
+            get<QLineEdit>(window, "bookTitle")->setText("Inventory roundtrip");
+            get<QPushButton>(window, "saveButton")->click();
+            CHECK(stock->value() == value);
+            if (value == maximum) {
+                QApplication::processEvents();
+                auto *edit = stock->findChild<QLineEdit *>();
+                CHECK(edit->text() == "2147483647");
+                CHECK(edit->fontMetrics().horizontalAdvance(edit->text()) + 8 < edit->width());
+                const QString screenshots = qEnvironmentVariable("CONSISTENCY_SCREENSHOT_DIR");
+                if (!screenshots.isEmpty()) {
+                    CHECK(QDir().mkpath(screenshots));
+                    for (QWidget *ancestor = stock->parentWidget(); ancestor; ancestor = ancestor->parentWidget()) {
+                        if (auto *scroll = qobject_cast<QScrollArea *>(ancestor)) {
+                            scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+                            break;
+                        }
+                    }
+                    QApplication::processEvents();
+                    CHECK(window.grab().save(QDir(screenshots).filePath("int-max-1000x680.png")));
+                }
+                edit->setText("2147483648");
+                CHECK(!stock->hasAcceptableInput());
+                answerDialog(window);
+                get<QPushButton>(window, "saveButton")->click();
+                CHECK(window.statusBar()->currentMessage().contains(QStringLiteral("失败")));
+            }
+        }
+        LibraryStore loaded;
+        CHECK(loaded.load(dir.path(), &error));
+        CHECK(loaded.books().findById("B004")->stock == value);
+    }
+    qInfo() << "R3 UI PASS: nonnegative int range roundtrips and readable INT_MAX; invalid input refused";
+    return true;
+}
+
+bool directoryLockUi()
+{
+    QTemporaryDir dir;
+    CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), dir));
+    LibraryStore owner;
+    QString error;
+    CHECK(owner.load(dir.path(), &error));
+    bool refused = false;
+    QTimer::singleShot(0, [&] {
+        for (QWidget *widget : QApplication::topLevelWidgets()) {
+            if (auto *box = qobject_cast<QMessageBox *>(widget)) {
+                refused = box->text().contains(QStringLiteral("数据目录正在使用"));
+                const QString screenshots = qEnvironmentVariable("CONSISTENCY_SCREENSHOT_DIR");
+                if (!screenshots.isEmpty()) {
+                    QDir().mkpath(screenshots);
+                    box->grab().save(QDir(screenshots).filePath("directory-in-use.png"));
+                }
+                box->accept();
+            }
+        }
+    });
+    MainWindow denied(dir.path());
+    denied.resize(1000, 680);
+    denied.show();
+    CHECK(refused && !get<QTabWidget>(denied, "mainTabs")->isEnabled());
+    CHECK(denied.statusBar()->currentMessage() == QStringLiteral("数据读取失败"));
+    return true;
+}
+
 bool goodbooksRehearsal()
 {
     QTemporaryDir dir;
@@ -738,5 +1134,12 @@ int main(int argc, char *argv[])
         QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
     qInfo() << "Qt screen:" << app.primaryScreen()->availableGeometry()
             << "DPR:" << app.primaryScreen()->devicePixelRatio();
-    return sampleStates() && goodbooksRehearsal() ? 0 : 1;
+    if (app.arguments().size() == 3 && app.arguments()[1] == "--cold-restart")
+        return coldStartReload(app.arguments()[2]) ? 0 : 1;
+    if (app.arguments().contains("--editor-consistency"))
+        return editorConsistency() ? 0 : 1;
+    if (app.arguments().contains("--inventory-range"))
+        return inventoryRange() ? 0 : 1;
+    return sampleStates() && editorConsistency() && inventoryRange() && directoryLockUi()
+        && coldStartStates() && goodbooksRehearsal() ? 0 : 1;
 }

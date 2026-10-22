@@ -1,9 +1,37 @@
+// 借还测试简述：临时目录中检查库存、重复借还、日期、保存失败和中断恢复。
 #include "librarystore.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <limits>
+
+bool stockBoundaries(const QDir &sample)
+{
+    QTemporaryDir dir;
+    if (!dir.isValid()) return false;
+    for (const QString &name : QStringList{"books.csv", "users.csv", "ratings.csv", "borrow_records.csv"})
+        if (!QFile::copy(sample.filePath(name), dir.filePath(name))) return false;
+    QString error, record;
+    LibraryStore store;
+    if (!store.load(dir.path(), &error)) return false;
+    Book book = *store.books().findById("B004");
+    book.stock = 0;
+    if (!store.updateBook(book, &error) || store.borrowBook("U0", "B004", "2026-10-22", &record, &error)) return false;
+    book.stock = std::numeric_limits<int>::max();
+    if (!store.updateBook(book, &error) || !store.borrowBook("U0", "B004", "2026-10-22", &record, &error)
+        || store.books().findById("B004")->stock != book.stock - 1) return false;
+    if (!store.returnBook(record, "2026-10-22", &error) || store.books().findById("B004")->stock != book.stock) return false;
+    if (!store.borrowBook("U0", "B004", "2026-10-22", &record, &error) || !store.updateBook(book, &error)) return false;
+    const int count = store.borrowRecords().size();
+    if (store.returnBook(record, "2026-10-22", &error) || store.books().findById("B004")->stock != book.stock
+        || store.borrowRecords().size() != count || store.borrowRecords().last().status != "borrowed") return false;
+    store = LibraryStore{};
+    LibraryStore loaded;
+    return loaded.load(dir.path(), &error) && loaded.books().findById("B004")->stock == book.stock
+        && loaded.borrowRecords().last().status == "borrowed";
+}
 
 bool blockedFileCase(const QDir &sample, const QString &blockedName)
 {
@@ -32,6 +60,7 @@ bool blockedFileCase(const QDir &sample, const QString &blockedName)
                                  && store.borrowRecords().size() == 2;
     if (!QDir(temp.path()).rmdir(blockedName) || !QFile::rename(held, original))
         return false;
+    store = LibraryStore{}; // Release the old writer before verifying saved files.
     LibraryStore restarted;
     return refused && memoryUnchanged && restarted.load(temp.path(), &error)
            && restarted.books().findById(QStringLiteral("B004"))->stock == 2
@@ -88,6 +117,7 @@ int main(int argc, char *argv[])
         || id != QStringLiteral("R005"))
         return 7;
 
+    store = LibraryStore{}; // Release the old writer before verifying saved files.
     LibraryStore restarted;
     if (!restarted.load(temp.path(), &error)
         || restarted.books().findById(QStringLiteral("B004"))->stock != 1
@@ -112,6 +142,7 @@ int main(int argc, char *argv[])
     if (!partial.update(changed, &error)
         || !partial.save(temp.filePath(QStringLiteral("books.csv")), &error))
         return 12;
+    restarted = LibraryStore{};
     LibraryStore recovered;
     if (!recovered.load(temp.path(), &error)
         || recovered.books().findById(QStringLiteral("B004"))->stock != 1
@@ -123,6 +154,7 @@ int main(int argc, char *argv[])
         || duplicate.write("R006,U1,B001,2026-09-27,,borrowed\n") < 0)
         return 14;
     duplicate.close();
+    recovered = LibraryStore{};
     LibraryStore invalid;
     if (invalid.load(temp.path(), &error))
         return 15;
@@ -130,5 +162,7 @@ int main(int argc, char *argv[])
         return 16;
     if (!blockedFileCase(sample, QStringLiteral("borrow_records.csv")))
         return 17;
+    if (!stockBoundaries(sample))
+        return 18;
     return 0;
 }

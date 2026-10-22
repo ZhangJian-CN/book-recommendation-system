@@ -1,3 +1,4 @@
+// 共用窗口测试简述：在临时数据上操作 Qt 控件，检查图书、推荐、借还及重新加载后的结果。
 #include "mainwindow.h"
 
 #include <QApplication>

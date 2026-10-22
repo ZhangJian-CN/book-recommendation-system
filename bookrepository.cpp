@@ -1,4 +1,5 @@
-// 中检讲解：图书管理如何连接 CSV 与哈希索引，可依次查看 load、findById、insert、removeById。
+// 上接 LibraryStore 的业务操作，下接 Csv 的文本读写和 BookIndex 的编号索引。
+// 讲解时分清三件事：仓库校验图书字段，业务层检查评分/借阅引用，CSV 层解析文件格式。
 #include "bookrepository.h"
 #include "csvutil.h"
 
@@ -9,6 +10,7 @@ const QString header = QStringLiteral("book_id,title,author,category,stock");
 
 bool validBook(const Book &book)
 {
+    // 这是内存接口也会使用的校验；不能假定所有调用一定来自带输入限制的界面。
     // id 不允许空值或两端空白；书名/作者至少含非空白内容；category 当前允许为空。
     return !book.id.isEmpty() && book.id == book.id.trimmed()
            && !book.title.trimmed().isEmpty()
@@ -18,6 +20,8 @@ bool validBook(const Book &book)
 
 bool BookRepository::load(const QString &path, QString *error)
 {
+    // 输入图书 CSV 路径；成功返回 true，失败通过 error 交出原因。
+    // loaded 是候选新数据，books_ 是原有效数据；没全部验完前不能先清空原仓库。
     // CSV 字符串字段转为 Book；库存必须是非负整数，编号唯一，书名和作者非空。
     // 用临时数组校验全部行，成功后替换仓库并建立哈希索引。
     QVector<QStringList> rows;
@@ -26,9 +30,10 @@ bool BookRepository::load(const QString &path, QString *error)
     QVector<Book> loaded;
     // QSet 用于加载时检查编号唯一性；运行时按编号查找使用 BookIndex。
     QSet<QString> ids;
-    for (int row = 0; row < rows.size(); ++row) {
-        const QStringList &fields = rows[row];
-        bool stockOk = false;
+    // QSet 在这里仅用于加载时去重；运行时按编号查找仍调用自己实现的 BookIndex。
+    for (int row = 0; row < rows.size(); ++row) { // 逐条处理 CSV 数据行；表头已由 Csv::read 读过。
+        const QStringList &fields = rows[row]; // 借用这一行五个文本字段，避免再次复制整行。
+        bool stockOk = false; // 单独记录库存转换是否成功，不能只看转换后的整数。
         // 还须检查 stockOk，区分合法库存文本 "0" 与转整数失败得到的 0。
         const int stock = fields[4].toInt(&stockOk);
         Book book{fields[0], fields[1], fields[2], fields[3], stock};
@@ -37,8 +42,8 @@ bool BookRepository::load(const QString &path, QString *error)
             // row 从 0 开始且文件有一行表头，所以错误位置为 row+2。
             return false;
         }
-        ids.insert(book.id);
-        loaded.append(book);
+        ids.insert(book.id); // 登记已见编号，下一行若出现相同编号就会被判为重复。
+        loaded.append(book); // 仅把已通过校验的实体放入候选数组，尚不修改原仓库。
     }
     // 校验结束后提交完整数组，索引必须按新数组位置建立。
     books_ = loaded;
@@ -48,9 +53,11 @@ bool BookRepository::load(const QString &path, QString *error)
 
 bool BookRepository::save(const QString &path, QString *error) const
 {
+    // const 表示保存不修改内存实体；字段顺序必须与 header 约定完全一致。
+    // 磁盘中的 stock 是文字，内存中是整数；读写两端各做一次类型转换。
     // 按固定字段顺序把 Book 转回文本行，CSV 引号处理及文件提交交给通用层。
     QVector<QStringList> rows;
-    for (const Book &book : books_)
+    for (const Book &book : books_) // 顺序遍历所有实体，每本书序列化为一条五字段记录。
         rows.append({book.id, book.title, book.author, book.category,
                      QString::number(book.stock)});
     return Csv::write(path, header, rows, error);
@@ -58,14 +65,16 @@ bool BookRepository::save(const QString &path, QString *error) const
 
 const Book *BookRepository::findById(const QString &id) const
 {
+    // 这几行是证明“界面编号查询真的用了哈希”的入口，而不仅是在项目里放了一个哈希类。
     // 通过 BookIndex 哈希索引找到数组下标，再访问完整图书，不顺序扫描全部图书。
-    const int row = index_.rowForId(id);
+    const int row = index_.rowForId(id); // 先取得下标，后面才决定能否访问 books_[row]。
     // 找到返回实体指针，未找到返回 nullptr，不能拿 -1 去访问数组。
     return row < 0 ? nullptr : &books_[row];
 }
 
 bool BookRepository::insert(const Book &book, QString *error)
 {
+    // 参数是完整实体；成功时数组多一项、索引多一个映射，但此函数本身不写文件。
     // true 表示内存仓库已新增；最终持久化由 LibraryStore 调用 save 完成。
     if (!validBook(book)) {
         *error = QStringLiteral("编号、书名、作者不能为空，库存不能为负数");
@@ -84,6 +93,7 @@ bool BookRepository::insert(const Book &book, QString *error)
 
 bool BookRepository::update(const Book &book, QString *error)
 {
+    // 业务主键是 id，界面修改现有图书时继续使用 selectedId_，不从“新书编号”框改主键。
     // book.id 定位待修改实体；只能更新已有编号，不能通过更新接口新增或改号。
     if (!validBook(book)) {
         *error = QStringLiteral("编号、书名、作者不能为空，库存不能为负数");
@@ -101,6 +111,8 @@ bool BookRepository::update(const Book &book, QString *error)
 
 bool BookRepository::removeById(const QString &id, QString *error)
 {
+    // 原数组 [B001,B002,B003] 删除 B002 后变成 [B001,B003]；B003 的下标从 2 变成 1。
+    // 所以完整删除包含“移动数组元素 + 重建索引”，不能把它的耗时讲成仅删除一个链结点。
     // 调用前业务层先检查评分及借阅引用；本函数处理实体数组及其索引。
     const int row = index_.rowForId(id);
     if (row < 0) {
