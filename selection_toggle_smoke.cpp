@@ -1,3 +1,5 @@
+// 交互测试简述：模拟真实点击验证再次点击复位，另用像素采样检查选中背景是否有白缝。
+// 这些视觉操作也会比较临时 CSV 内容，证明取消选择并没有改写业务数据。
 #include "mainwindow.h"
 
 #include <QApplication>
@@ -269,6 +271,7 @@ bool programmaticSelection()
 {
     QTemporaryDir directory;
     CHECK(copyData(QStringLiteral(SAMPLE_GOODBOOKS_DATA_DIR), directory));
+    {
     MainWindow window(directory.path());
     window.show();
     settle();
@@ -303,9 +306,83 @@ bool programmaticSelection()
     CHECK(bookWasReset(window));
     get<QPushButton>(window, "showAllButton")->click();
     CHECK(bookWasReset(window) && csvContents(directory) == savedCsv);
+    } // Destroy the previous window and release its LibraryStore lock.
     MainWindow restarted(directory.path());
     CHECK(get<QTableWidget>(restarted, "booksTable")->item(2, 1)->text() == "Saved title");
     CHECK(get<QTableWidget>(restarted, "booksTable")->rowCount() == 101);
+    return true;
+}
+
+bool consistentOperationTargets()
+{
+    QTemporaryDir directory;
+    CHECK(copyData(QStringLiteral(SAMPLE_DATA_DIR), directory));
+    {
+        MainWindow window(directory.path());
+        window.show();
+        auto *books = get<QTableWidget>(window, "booksTable");
+        auto *search = get<QLineEdit>(window, "bookSearch");
+        auto *title = get<QLineEdit>(window, "bookTitle");
+        clickCell(books, 0, 0);
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(books, &down);
+        CHECK(books->currentRow() == 1 && search->text() == "B002");
+        CHECK(get<QLabel>(window, "bookSelection")->text().contains("B002"));
+        title->setText("Keyboard saved B002");
+        get<QPushButton>(window, "saveButton")->click();
+        CHECK(books->item(0, 1)->text() != "Keyboard saved B002");
+        CHECK(books->item(1, 1)->text() == "Keyboard saved B002");
+        // All keyboard navigation paths follow the actual selected ID, including the first selection.
+        for (int key : {Qt::Key_Up, Qt::Key_End, Qt::Key_Home, Qt::Key_PageDown, Qt::Key_PageUp}) {
+            QKeyEvent event(QEvent::KeyPress, key, Qt::NoModifier);
+            QApplication::sendEvent(books, &event);
+            const auto rows = books->selectionModel()->selectedRows();
+            CHECK(rows.size() == 1 && search->text() == books->item(rows.first().row(), 0)->text());
+        }
+        clickCell(books, books->currentRow(), 0);
+        CHECK(bookWasReset(window));
+        QApplication::sendEvent(books, &down);
+        CHECK(books->selectionModel()->hasSelection());
+        CHECK(search->text() == books->item(books->selectionModel()->selectedRows().first().row(), 0)->text());
+        search->setText("B002");
+        get<QPushButton>(window, "searchButton")->click();
+        title->setText("Unsaved same-object draft");
+        get<QPushButton>(window, "searchButton")->click();
+        get<QPushButton>(window, "showAllButton")->click();
+        CHECK(title->text() == "Unsaved same-object draft");
+        get<QLineEdit>(window, "keywordSearch")->setText(QStringLiteral("布莱恩特"));
+        get<QPushButton>(window, "keywordButton")->click();
+        CHECK(!books->selectionModel()->hasSelection());
+        CHECK(title->text() == "Unsaved same-object draft");
+        CHECK(get<QLabel>(window, "bookSelection")->text().contains(QStringLiteral("仍可编辑")));
+        clickCell(books, 0, 0);
+        CHECK(search->text() == "B004");
+        CHECK(window.statusBar()->currentMessage().contains(QStringLiteral("未保存输入已放弃")));
+        title->setText("Filtered saved B004");
+        get<QPushButton>(window, "saveButton")->click();
+        auto *tabs = get<QTabWidget>(window, "mainTabs");
+        tabs->setCurrentIndex(2);
+        get<QPushButton>(window, "borrowButton")->click(); // R003/U0/B004
+        auto *borrows = get<QTableWidget>(window, "borrowTable");
+        clickCell(borrows, 0, 0);
+        QApplication::sendEvent(borrows, &down);
+        QApplication::sendEvent(borrows, &down);
+        CHECK(get<QLineEdit>(window, "returnRecord")->text() == "R003");
+        CHECK(get<QLabel>(window, "borrowSelection")->text().contains("R003"));
+        get<QPushButton>(window, "returnButton")->click();
+        CHECK(borrows->item(0, 5)->text() == QStringLiteral("未归还"));
+        CHECK(borrows->item(2, 5)->text() == QStringLiteral("已归还"));
+        get<QLineEdit>(window, "returnRecord")->setText("unknown-record");
+        CHECK(!borrows->selectionModel()->hasSelection());
+    }
+    LibraryStore loaded;
+    QString error;
+    CHECK(loaded.load(directory.path(), &error));
+    CHECK(loaded.books().findById("B002")->title == "Keyboard saved B002");
+    CHECK(loaded.books().findById("B004")->title == "Filtered saved B004");
+    CHECK(loaded.books().findById("B004")->stock == 2);
+    CHECK(loaded.borrowRecords()[0].status == "borrowed" && loaded.borrowRecords()[2].status == "returned");
+    qInfo() << "R2 PASS: mouse/keyboard/query targets, drafts, filtered ID and returned record verified after reload";
     return true;
 }
 
@@ -447,5 +524,7 @@ int main(int argc, char *argv[])
     if (app.platformName() == QStringLiteral("offscreen")
         && QFile::exists(QStringLiteral("C:/Windows/Fonts/msyh.ttc")))
         QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
-    return sampleInteractions() && programmaticSelection() && selectionBackgrounds() ? 0 : 1;
+    if (app.arguments().contains("--consistency"))
+        return consistentOperationTargets() ? 0 : 1;
+    return sampleInteractions() && programmaticSelection() && consistentOperationTargets() && selectionBackgrounds() ? 0 : 1;
 }

@@ -1,3 +1,4 @@
+// 共用业务测试简述：在临时样例中核对数据校验、图书操作、评分与推荐手算结果。
 #include "bookindex.h"
 #include "booksearch.h"
 #include "librarystore.h"
@@ -93,6 +94,7 @@ int main(int argc, char *argv[])
 
     if (!store.rate(QStringLiteral("U0"), QStringLiteral("B003"), 4, &error))
         return 12;
+    store = LibraryStore{}; // Restart after releasing the original writer.
     LibraryStore restarted;
     if (!restarted.load(temp.path(), &error))
         return 13;

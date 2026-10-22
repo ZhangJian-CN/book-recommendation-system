@@ -1,0 +1,1 @@
+PASS: partition union/disjointness; no training-book recommendations; available-stock filtering; popular rank recomputed before truncation; all 80 metric rows and macro averages independently recomputed.

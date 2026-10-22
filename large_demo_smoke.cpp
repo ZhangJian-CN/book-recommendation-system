@@ -1,3 +1,4 @@
+// 演示数据测试简述：分别加载合成数据与 Goodbooks 子集，核对 100/40/800/10 及推荐结果。
 #include "librarystore.h"
 #include "recommendation.h"
 

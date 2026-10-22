@@ -1,5 +1,7 @@
 // 中检讲解：本文件集中实现评分矩阵、用户协同过滤和 Top K 小顶堆。
 // 推荐流程：建立矩阵 -> 计算共同评分相似度 -> 预测候选分数 -> 堆选取 -> 排序输出。
+// 推荐侧简述：构造评分矩阵 -> 计算共同评分余弦相似度 -> 预测或热门回退 -> 小顶堆选 Top K。
+// MainWindow 每次重新推荐时构造服务，因此评分和库存变化在下一次计算中生效。
 #include "recommendation.h"
 
 #include <algorithm>
@@ -69,7 +71,7 @@ public:
         }
     }
 
-//创建评分矩阵
+// 将堆中保留的条目按统一优先级排序；评分矩阵在 RecommendationService 构造函数中创建。
 
     QVector<Recommendation> sorted() const
     {
@@ -150,6 +152,44 @@ double RecommendationService::similarity(const QString &userA,
     return squareA > 0 && squareB > 0 ? dot / std::sqrt(squareA * squareB) : 0.0;
 }
 
+bool RecommendationService::hasRatings(const QString &userId) const
+{
+    const int row = userRows_.value(userId, -1);
+    if (row < 0)
+        return false;
+    for (int score : matrix_[row]) {
+        if (score > 0)
+            return true;
+    }
+    return false;
+}
+
+QVector<Recommendation> RecommendationService::popularTopK(int topK) const
+{
+    if (topK <= 0)
+        return {};
+    // 扫描稠密矩阵 O(U*B)，堆维护 O(B log K)，最终排序 O(K log K)。
+    // 仅堆的额外空间为 O(K)；构造服务时的评分矩阵仍占 O(U*B)。
+    TopKHeap heap(topK);
+    for (int col = 0; col < books_.all().size(); ++col) {
+        const Book &book = books_.all()[col];
+        if (book.stock <= 0)
+            continue;
+        int count = 0;
+        double total = 0.0;
+        for (const auto &row : matrix_) {
+            if (row[col] > 0) {
+                ++count;
+                total += row[col];
+            }
+        }
+        // 无人评分的图书不进入热门榜，不用零分占位；排序使用未舍入的平均值。
+        if (count > 0)
+            heap.add({book.id, book.title, total / count, count, RecommendationSource::Popular});
+    }
+    return heap.sorted();
+}
+
 QVector<Recommendation> RecommendationService::recommend(const QString &userId,
                                                           int topK) const
 {
@@ -159,6 +199,9 @@ QVector<Recommendation> RecommendationService::recommend(const QString &userId,
     // 不存在的用户或非正 K 没有合法推荐请求，直接返回空数组。
     if (target < 0 || topK <= 0)
         return {};
+    // 已注册但无评分的用户尚无协同依据，统一复用全局热门候选与排序。
+    if (!hasRatings(userId))
+        return popularTopK(topK);
 
     // 余弦相似度计算：第 1 步：预先计算目标用户与所有其他用户的相似度，后续逐书预测复用。
     // 本实现使用全部具有正相似度的其他用户作为有效邻居，不只取固定人数。
@@ -196,7 +239,7 @@ QVector<Recommendation> RecommendationService::recommend(const QString &userId,
             }
         }
         // 预测分 = weighted/weight；分母为 0 则回退到平均评分，完全无人评分则为 0。
-        // 热门项的排名先看评分人数再看平均分；所有相似度为 0 的新用户也走此分支。
+        // 热门项的排名先看评分人数再看平均分；已有评分但无有效邻居时保留原有回退。
         // 按候选书分别判断来源：同一次推荐可同时包含协同预测项和热门回退项。
         const RecommendationSource source = weight > 0.0
                                                 ? RecommendationSource::Collaborative
